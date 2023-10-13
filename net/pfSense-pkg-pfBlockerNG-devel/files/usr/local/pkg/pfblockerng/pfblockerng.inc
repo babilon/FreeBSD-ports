@@ -746,6 +746,7 @@ function pfb_global() {
 	$pfb['dnsbl_res_cache']	= $pfb['dnsblconfig']['pfb_cache'];			// DNSBL Option to backup/restore Resolver cache
 	$pfb['dnsbl_sync']	= $pfb['dnsblconfig']['pfb_dnsbl_sync'];		// Live Updates to Resolver without a Reload
 	$pfb['dnsbl_global_log']= $pfb['dnsblconfig']['global_log'] ?: '';		// Global Logging/Blocking mode
+	$pfb['dnsbl_py_prune']	= $pfb['dnsblconfig']['pfb_dnsbl_prune'];		// Prune duplicates in processed DNSBL lists
 
 	$pfb['dnsbl_python']	= $pfb['dnsblconfig']['pfb_python'];			// DNSBL Resolver python integration
 	$pfb['dnsbl_mode']	= $pfb['dnsblconfig']['dnsbl_mode'];			// DNSBL Mode (Unbound/python mode)
@@ -2528,6 +2529,11 @@ function pfb_unbound_python($mode) {
 			$python_debug = 'on';
 		}
 
+		$python_prune = 'off';
+		if ($pfb['dnsbl_py_prune'] == 'on') {
+			$python_prune = 'on';
+		}
+
 		$python_ipv6 = 'off';
 		if ($pfb['dnsbl_v6'] == 'on') {
 			$python_ipv6 = 'on';
@@ -2604,6 +2610,7 @@ function pfb_unbound_python($mode) {
 dnsbl_ipv4	= {$pfb['dnsbl_vip']}
 python_enable	= {$python_enable}
 python_debug	= {$python_debug}
+python_prune	= {$python_prune}
 python_ipv6	= {$python_ipv6}
 python_reply	= {$python_reply}
 python_blocking	= {$python_blocking}
@@ -9173,6 +9180,18 @@ function sync_package_pfblockerng($cron='') {
 	if ($pfb['domain_update']) {
 		if (!empty($lists_dnsbl_all)) {
 			pfb_logger("\n------------------------------------------------------------------------\n", 1);
+
+                        if ($pfb['dnsbl_py_prune'] == 'on') {
+                            pfb_logger("\nPrune duplicates in each DNSBL list before final assembly ..\n", 1);
+                            foreach ($lists_dnsbl_all as $current_list) {
+                                $rawname = "{$pfb['dnsdir']}/" . basename("{$pfb['dnsdir']}/{$current_list}", ".txt");
+                                rename("{$rawname}.txt", "{$rawname}.fat");
+                                pfb_logger("Queued {$rawname}.fat for pruning.\n", 1);
+                            }
+                            pfb_logger("\nBegin pruning [ NOW ] ..\n", 1);
+                            pfb_prune_duplicates();
+                            pfb_logger("Pruning completed [ NOW ]\n", 1);
+                        }
 
 			pfb_logger("\nAssembling DNSBL database...", 1);
 			unlink_if_exists("{$pfb['dnsbl_file']}.raw");

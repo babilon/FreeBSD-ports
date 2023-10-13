@@ -80,6 +80,7 @@ $pconfig['pfb_cname']		= $pfb['dconfig']['pfb_cname']				?: '';
 $pconfig['pfb_noaaaa']		= $pfb['dconfig']['pfb_noaaaa']				?: '';
 $pconfig['pfb_gp']		= $pfb['dconfig']['pfb_gp']				?: '';
 $pconfig['pfb_py_debug']= $pfb['dconfig']['pfb_py_debug']		?: '';
+$pconfig['pfb_dnsbl_prune']	= $pfb['dconfig']['pfb_dnsbl_prune']			?: '';
 $pconfig['pfb_pytld']		= $pfb['dconfig']['pfb_pytld']				?: '';
 $pconfig['pfb_pytld_sort']	= $pfb['dconfig']['pfb_pytld_sort']			?: '';
 $pconfig['pfb_pytlds_gtld']	= explode(',', $pfb['dconfig']['pfb_pytlds_gtld'])	?: $default_tlds;
@@ -588,6 +589,7 @@ if ($_POST) {
 			$pfb['dconfig']['pfb_noaaaa']		= pfb_filter($_POST['pfb_noaaaa'], PFB_FILTER_ON_OFF, 'dnsbl')		?: '';
 			$pfb['dconfig']['pfb_gp']		= pfb_filter($_POST['pfb_gp'], PFB_FILTER_ON_OFF, 'dnsbl')		?: '';
 			$pfb['dconfig']['pfb_py_debug']		= pfb_filter($_POST['pfb_py_debug'], PFB_FILTER_ON_OFF, 'dnsbl')	?: '';
+			$pfb['dconfig']['pfb_dnsbl_prune']		= pfb_filter($_POST['pfb_dnsbl_prune'], PFB_FILTER_ON_OFF, 'dnsbl')	?: '';
 
 			$pfb['dconfig']['pfb_pytld']		= pfb_filter($_POST['pfb_pytld'], PFB_FILTER_ON_OFF, 'dnsbl')		?: '';
 			$pfb['dconfig']['pfb_pytld_sort']	= pfb_filter($_POST['pfb_pytld_sort'], PFB_FILTER_ON_OFF, 'dnsbl')	?: '';
@@ -2596,6 +2598,17 @@ $section->addInput(new Form_Checkbox(
 ))->setHelp('Enable the Python Group Policy functionality to allow certain Local LAN IPs to bypass DNSBL');
 
 $section->addInput(new Form_Checkbox(
+	'pfb_dnsbl_prune',
+	gettext('Python Prune Duplicates') . '(py)',
+	'Enable',
+	$pconfig['pfb_dnsbl_prune'] === 'on' ? true:false,
+	'on'
+))->setHelp('Prune DNSBL lists on update and reload. This can increase CPU and memory usage during updates and reloads<br/>'
+            . '<strong>especially when numerous large lists are in use</strong>.<br/>'
+            . 'This tool may aid in evaluating the value of a given list. An empty pruned list may not be worth downloading and processing.<br/>'
+            . 'All lists are loaded and pruned as an entire set. The remains of each list are then written to their original file.<br/>');
+
+$section->addInput(new Form_Checkbox(
 	'pfb_py_debug',
 	gettext('Python Debug Log') . '(py)',
 	'Enable',
@@ -3242,6 +3255,7 @@ function enable_python() {
 	hideCheckbox('pfb_noaaaa', !python);
 	hideCheckbox('pfb_cname', !python);
 	hideCheckbox('pfb_gp', !python);
+	hideCheckbox('pfb_dnsbl_prune', !python);
 	hideCheckbox('pfb_py_debug', !python);
 	hideInput('pfb_regex_list', !python);
 	hideInput('pfb_noaaaa_list', !python);
