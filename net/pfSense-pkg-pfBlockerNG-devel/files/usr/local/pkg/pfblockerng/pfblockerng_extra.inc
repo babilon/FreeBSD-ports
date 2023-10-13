@@ -21,4 +21,9 @@
  */
 
 // This file is used to 'include functions' not yet merged into pfSense
+function pfb_prune_duplicates() {
+    global $pfb;
+    $pfb['prune_binary'] = '/usr/local/pkg/pfblockerng/pfb_dnsbl_prune.real';
+    exec("{$pfb['prune_binary']} -E /var/log/pfblockerng/pfb_dnsbl_prune_err.log -L /var/log/pfblockerng/pfb_dnsbl_prune.log -d {$pfb['dnsdir']}");
+}
 ?>
