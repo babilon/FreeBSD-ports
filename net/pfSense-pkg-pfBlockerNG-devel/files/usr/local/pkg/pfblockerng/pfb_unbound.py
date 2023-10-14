@@ -20,7 +20,6 @@
 
 from datetime import datetime
 from functools import wraps
-import traceback
 import inspect
 import logging
 import time
@@ -72,6 +71,14 @@ except Exception as e:
     pfb['mod_sqlite3'] = False
     pfb['mod_sqlite3_e'] = e
     pass
+
+try:
+    from concurrent.futures import ThreadPoolExecutor
+    pfb['async_io'] = True
+    pfb['async_io_executor'] = ThreadPoolExecutor(max_workers=1)
+except Exception as e:
+    pfb['async_io'] = False
+    pfb['async_io_executor_e'] = e
 
 def exception_logger(func):
     @wraps(func)
@@ -133,13 +140,24 @@ def bootstrap_logging():
         def __init__(self, logger):
             self.logger = logger
             self.linebuf = ''
+            if pfb['async_io']:
+                self.executor = pfb['async_io_executor']
+            else:
+                self.executor = None
 
-        def write(self, msg):
+        def _write(self, msg):
             if msg != pfb['p_err']:
                 msg = msg.rstrip()
                 self.logger.log(logging.ERROR, msg)
                 _debug('[ERROR LOG]: {}', msg)
             pfb['p_err'] = msg
+
+        def write(self, msg):
+            if self.executor is not None:
+                self.executor.submit(self._write, msg)
+            else:
+                self._write(msg)
+
 
     # Create python error logfile
     logfile = '/var/log/pfblockerng/py_error.log'
@@ -201,6 +219,9 @@ def init(id, env):
 
     if not pfb['mod_sqlite3']:
         sys.stderr.write("[pfBlockerNG]: Failed to load python module 'sqlite3': {}" .format(pfb['mod_sqlite3_e']))
+
+    if not pfb['async_io']:
+        sys.stderr.write("[pfBlockerNG]: Failed to create I/O Thread Pool Executor: {}" .format(pfb['async_io_executor_e']))
 
     # Initialize default settings
     pfb['dnsbl_ipv4'] = ''
@@ -887,6 +908,13 @@ def write_sqlite(db, groupname, update):
 
     return True
 
+
+def write_sqlite_async(db, groupname, update):
+    if pfb['async_io']:
+        pfb['async_io_executor'].submit(write_sqlite, db, groupname, update)
+    else:
+        write_sqlite(db, groupname, update)
+
 @traced
 def format_b_type(b_type, q_type, isCNAME):
     if isCNAME:
@@ -894,14 +922,13 @@ def format_b_type(b_type, q_type, isCNAME):
     else:
         return '{}_{}'.format(b_type, q_type)
 
-
-
+@traced
 def get_details_dnsbl(q_name, q_ip, isCNAME):
     global pfb, dnsblDB
 
     # Increment totalqueries counter
     if pfb['sqlite3_resolver_con']:
-        write_sqlite(1, '', True)
+        write_sqlite_async(1, '', True)
 
     # Determine if event is a 'reply' or DNSBL block
     isDNSBL = dnsblDB.get(q_name)
@@ -913,7 +940,7 @@ def get_details_dnsbl(q_name, q_ip, isCNAME):
 
         # Increment dnsblgroup counter
         if pfb['sqlite3_dnsbl_con'] and isDNSBL['group'] != '':
-            write_sqlite(2, isDNSBL['group'], True)
+            write_sqlite_async(2, isDNSBL['group'], True)
 
         dupEntry = '+'
         lastEvent = dnsblDB.get('last-event')
@@ -941,8 +968,13 @@ def get_details_dnsbl(q_name, q_ip, isCNAME):
         b_type = format_b_type(isDNSBL['b_type'], isDNSBL['q_type'], isCNAME)
 
         csv_line = ','.join(str(v) for v in ('DNSBL-python', timestamp, q_name, q_ip, isDNSBL['p_type'], b_type, isDNSBL['group'], isDNSBL['b_eval'], isDNSBL['feed'], dupEntry))
-        log_entry(csv_line, '/var/log/pfblockerng/dnsbl.log')
-        log_entry(csv_line, '/var/log/pfblockerng/unified.log')
+        if pfb['async_io']:
+            executor = pfb['async_io_executor']
+            executor.submit(log_entry, csv_line, '/var/log/pfblockerng/dnsbl.log')
+            executor.submit(log_entry, csv_line, '/var/log/pfblockerng/unified.log')
+        else:
+            log_entry(csv_line, '/var/log/pfblockerng/dnsbl.log')
+            log_entry(csv_line, '/var/log/pfblockerng/unified.log')
 
     return True
 
@@ -965,33 +997,35 @@ def _debug(format_str, *args, stack_height=1):
     if pfb.get('python_debug') and isinstance(format_str, str):
         with open('/var/log/pfblockerng/py_debug.log', 'a') as append_log:
             append_log.write(datetime.now().strftime("%b %-d %H:%M:%S"))
-            append_log.write(' | ')
-            stack_element = inspect.stack()[stack_height]
-            append_log.write(stack_element[3])  # caller function
-            append_log.write(':')
-            append_log.write(str(stack_element[2]))  # call site line number
-            append_log.write(' | DEBUG: ')
+            append_log.write('|DEBUG: ')
             if args:
                 append_log.write(format_str.format(*args))
             else:
                 append_log.write(format_str)
             append_log.write('\n')
 
-def debug(format_str, *args, stack_height=1):
-    global pfb
+# Helper function for using async I/O
+def __debug(format_str, *args):
+    for i in range(1,5):
+        try:
+            _debug(format_str, *args)
+        except Exception as e:
+            if i == 4:
+                sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}" .format(i, e))
+            time.sleep(0.25)
+            pass
+            continue
+        break
 
+def debug(format_str, *args):
+    global pfb
     # validate before to avoid additional costs for non-debug calls
     if pfb.get('python_debug') and isinstance(format_str, str):
-        for i in range(1,5):
-            try:
-                _debug(format_str, *args, stack_height=stack_height+1)
-            except Exception as e:
-                if i == 4:
-                    sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}" .format(i, e))
-                time.sleep(0.25)
-                pass
-                continue
-            break
+        if pfb['async_io']:
+            executor = pfb['async_io_executor']
+            executor.submit(__debug, format_str, *args)
+        else:
+            __debug(format_str, *args)
 
 @traced
 def get_details_reply(m_type, qinfo, qstate, rep, kwargs):
@@ -1029,7 +1063,7 @@ def get_details_reply(m_type, qinfo, qstate, rep, kwargs):
 
     # Increment totalqueries counter (Don't include the Resolver DNS requests)
     if pfb['sqlite3_resolver_con'] and q_ip != '127.0.0.1':
-        write_sqlite(1, '', True)
+        write_sqlite_async(1, '', True)
 
     # Do not log Replies, if disabled
     if not pfb['python_reply']:
@@ -1171,8 +1205,13 @@ def get_details_reply(m_type, qinfo, qstate, rep, kwargs):
         break
 
     csv_line = ','.join(str(v) for v in ('DNS-reply', timestamp, m_type, o_type, q_type, ttl, q_name, q_ip, r_addr, iso_code))
-    log_entry(csv_line, '/var/log/pfblockerng/dns_reply.log')
-    log_entry(csv_line, '/var/log/pfblockerng/unified.log')
+    if pfb['async_io']:
+        executor = pfb['async_io_executor']
+        executor.submit(log_entry, csv_line, '/var/log/pfblockerng/dns_reply.log')
+        executor.submit(log_entry, csv_line, '/var/log/pfblockerng/unified.log')
+    else:
+        log_entry(csv_line, '/var/log/pfblockerng/dns_reply.log')
+        log_entry(csv_line, '/var/log/pfblockerng/unified.log')
 
     return True
 
@@ -1282,6 +1321,9 @@ def deinit(id):
 
     if pfb['python_maxmind']:
         maxmindReader.close()
+
+    if pfb['async_io']:
+        pfb['async_io_executor'].shutdown()
 
     log_info('[pfBlockerNG]: pfb_unbound.py script exiting')
     return True
@@ -1869,7 +1911,7 @@ def operate(id, event, qstate, qdata):
 
                         # FIXME: blocking for different types will not update the DB values, rework the decision process and reporting
                         # Add domain data to DNSBL cache for Reports tab
-                        write_sqlite(3, '', [format_b_type(b_type, q_type_str, isCNAME), q_name, group, b_eval, feed])
+                        write_sqlite_async(3, '', [format_b_type(b_type, q_type_str, isCNAME), q_name, group, b_eval, feed])
 
                         # Skip subsequent DNSBL validation for original domain (CNAME validation), and add domain to dict for get_details_dnsbl function
                         if isCNAME and dnsblDB.get(q_name_original) is None:
@@ -1879,7 +1921,7 @@ def operate(id, event, qstate, qdata):
 
                             # FIXME: blocking for different types will not update the DB values, rework the decision process and reporting
                             # Add domain data to DNSBL cache for Reports tab
-                            write_sqlite(3, '', [format_b_type(b_type, q_type_str, True), q_name_original, group, b_eval, feed])
+                            write_sqlite_async(3, '', [format_b_type(b_type, q_type_str, True), q_name_original, group, b_eval, feed])
 
                 # Use previously blocked domain details
                 else:
