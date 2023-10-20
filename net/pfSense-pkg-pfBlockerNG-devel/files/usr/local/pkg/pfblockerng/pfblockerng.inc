@@ -2431,12 +2431,6 @@ function pfb_unbound_python_whitelist($mode='') {
 					$line = substr($line, 4);
 				}
 
-				// Minimize the python whitelist queries to the smallest tld segment count
-				if (!isset($tld_segments)) {
-					$tld_segments = (substr_count($line, '.') +1);
-				}
-				$tld_segments = @min((array((substr_count($line, '.') +1), $tld_segments) ?: 1));
-
 				// 0 = literal
 				// 1 = wildcard
 				if (substr($line, 0, 1) == '.') {
@@ -2562,9 +2556,6 @@ function pfb_unbound_python($mode) {
 			$pfbpython = TRUE;
 		}
 
-		if (!isset($tld_segments)) {
-			$tld_segments = '1';
-		}
 
 		$python_debug = 'off';
 		if ($pfb['dnsbl_py_debug'] == 'on') {
@@ -2652,7 +2643,6 @@ python_reply	= {$python_reply}
 python_blocking	= {$python_blocking}
 python_hsts	= {$python_hsts}
 python_idn	= {$python_idn}
-python_tld_seg	= {$tld_segments}
 python_tld	= {$python_tld}
 python_tlds	= {$python_tlds}
 python_nolog	= {$python_nolog}
@@ -8412,7 +8402,6 @@ function sync_package_pfblockerng($cron='') {
 								// Variables for parsing Adblock-style lists
 								$adblock = FALSE;
 								$whitelist_data = '';
-								$adblock_raw = FALSE;
 
 								$run_once = $csv_parser = FALSE;
 								$csv_type = '';
@@ -8422,7 +8411,8 @@ function sync_package_pfblockerng($cron='') {
 								if (($fhandle = @fopen("{$file_dwn}.orig", 'r')) !== FALSE) {
 									if (($dhandle = @fopen("{$pfbfolder}/{$header}.bk", 'w')) !== FALSE &&
 										($whandle = @fopen("{$pfbfolder}/{$header}.wk", 'w')) !== FALSE) {
-											while (($line = @fgets($fhandle)) !== FALSE) {
+										
+										while (($line = @fgets($fhandle)) !== FALSE) {
 
 											// Collect original line
 											$oline = $line;
@@ -8439,6 +8429,9 @@ function sync_package_pfblockerng($cron='') {
 
 											// Remove invalid charaters
 											$line = trim($line, " \t\n\r\0\x0B\xC2\xA0");
+
+											// Make it case-insensitive
+											$line = strtolower($line);
 
 											// Probably Adblock-style domain whitelist
 											if (substr($line, 0, 1) === '|' ||
@@ -8491,13 +8484,13 @@ function sync_package_pfblockerng($cron='') {
 
 														if (strpos($line, '*') !== FALSE) {
 															// Quote for Regular Expression, except * and -
-															$line = strtolower(str_replace($w_search, $w_replace_py, preg_quote($line)));
+															$line = str_replace($w_search, $w_replace_py, preg_quote($line));
 															// 2 = regular expression flag
 															$whitelist_data = "(?:^|\\.){$line},2\n";
 														} 
 														else {
 															// Remove leading/trailing dots
-															$line = strtolower(trim(trim($line), '.'));
+															$line = trim(trim($line), '.');
 
 															// Skip empty lines
 															if (empty($line)) {
@@ -8520,7 +8513,7 @@ function sync_package_pfblockerng($cron='') {
 													}
 													else {
 														// Quote for Regular Expression, except * and -
-														$line = strtolower(str_replace($w_search, $w_replace, preg_quote($line)));
+														$line = str_replace($w_search, $w_replace, preg_quote($line));
 
 														// Safeguarding, but should never happen
 														if (empty($line)) {
@@ -8540,7 +8533,7 @@ function sync_package_pfblockerng($cron='') {
 												if($pfb['dnsbl_py_blacklist']) {
 													if (strpos($line, '*') !== FALSE) {
 														// Quote for Regular Expression, except * and -
-														$line = strtolower(str_replace($w_search, $w_replace_py, preg_quote($line)));
+														$line = str_replace($w_search, $w_replace_py, preg_quote($line));
 														// 2 = regular expression flag
 														$domain_data = ",(?:^|\\.){$line},,{$logging_type},{$header},{$alias},2\n";
 
@@ -8853,18 +8846,15 @@ function sync_package_pfblockerng($cron='') {
 											if ($pfb['dnsbl_py_blacklist']) {
 												// 0 = literal flag
 												// 1 = wildcard
-												$wildcard = $adblock ? 1 : 0;
-												$domain_data = ',' . strtolower($line)
-													. ",,{$logging_type},{$header},{$alias},{$wildcard}\n";
+												$wildcard = $adblock ? '1' : '0';
+												$domain_data = ",{$line},,{$logging_type},{$header},{$alias},{$wildcard}\n";
 											}
 											else {
 												$ipv6_dnsbl = "\n";
 												if ($pfb['dnsbl_v6'] == 'on' && !$pfb['dnsbl_tld']) {
-													$ipv6_dnsbl = " local-data: \"" . strtolower($line)
-															. " 60 IN AAAA {$sinkhole_type6}\"\n";
+													$ipv6_dnsbl = " local-data: \"{$line} 60 IN AAAA {$sinkhole_type6}\"\n";
 												}
-												$domain_data = "local-data: \"" . strtolower($line)
-														. " 60 IN A {$sinkhole_type4}\"{$ipv6_dnsbl}";
+												$domain_data = "local-data: \"{$line} 60 IN A {$sinkhole_type4}\"{$ipv6_dnsbl}";
 											}
 											@fwrite($dhandle, $domain_data);
 										}

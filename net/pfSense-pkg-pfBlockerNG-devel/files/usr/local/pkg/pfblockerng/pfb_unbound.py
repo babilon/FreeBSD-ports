@@ -170,7 +170,7 @@ def bootstrap_logging():
 @traced
 @exception_logger
 def init(id, env):
-    global pfb, rcodeDB, dataDB, wildcardDataDB, zoneDB, regexDataDB, regexDB, hstsDB, whiteDB, wildcardWhiteDB, regexWhiteDB, excludeDB, excludeAAAADB, excludeSS, dnsblDB, noAAAADB, gpListDB, safeSearchDB, maxmindReader
+    global pfb, rcodeDB, dataDB, wildcardDataDB, zoneDB, regexDataDB, regexDB, hstsDB, whiteDB, wildcardWhiteDB, regexWhiteDB, excludeDB, excludeAAAADB, excludeSS, dnsblDB, noAAAADB, gpListDB, safeSearchDB, maxmindReader, segmentSizeDB
 
     if not register_inplace_cb_reply(inplace_cb_reply, env, id):
         log_info('[pfBlockerNG]: Failed register_inplace_cb_reply')
@@ -273,6 +273,7 @@ def init(id, env):
     zoneDB = dict()
     dnsblDB = dict()
     safeSearchDB = dict()
+    segmentSizeDB = {'wildcardDataDB': pow(2, 32), 'wildcardWhiteDB': pow(2, 32), 'zoneDB': pow(2, 32)}
 
     regexDB = dict()
     hstsDB = set()
@@ -284,16 +285,16 @@ def init(id, env):
 
     # String deduplication for in-memory databases
     # Less invasive than String interning, gets collected at the end of initialization
-    stringDeduplicationDB = dict()
+    _stringDeduplicationDB = dict()
     def dedup(str_val):
         if not str_val:
             return str_val
 
-        cached = stringDeduplicationDB.get(str_val)
+        cached = _stringDeduplicationDB.get(str_val)
         if cached:
             return cached
 
-        stringDeduplicationDB[str_val] = str_val
+        _stringDeduplicationDB[str_val] = str_val
         return str_val
 
     # Read pfb_unbound.ini settings
@@ -320,8 +321,6 @@ def init(id, env):
                 pfb['python_hsts'] = config.getboolean('MAIN', 'python_hsts')
             if config.has_option('MAIN', 'python_idn'):
                 pfb['python_idn'] = config.getboolean('MAIN', 'python_idn')
-            if config.has_option('MAIN', 'python_tld_seg'):
-                pfb['python_tld_seg'] = config.getint('MAIN', 'python_tld_seg')
             if config.has_option('MAIN', 'python_tld'):
                 pfb['python_tld'] = config.getboolean('MAIN', 'python_tld')
             if config.has_option('MAIN', 'python_tlds'):
@@ -376,10 +375,10 @@ def init(id, env):
                             debug('Compiling REGEX: {}', pattern)
                             regexDB[name] = re.compile(pattern, re.IGNORECASE)
                         except Exception as e:
-                            sys.stderr.write("[pfBlockerNG]: Regex [ {} ] compile error pattern [  {}  ] on line #{}: {}" .format(name, pattern, r_count, e))
+                            sys.stderr.write("[pfBlockerNG]: Regex [ {} ] compile error pattern [ {} ] on line #{}: {}" .format(name, pattern, r_count, e))
                             pass
                         r_count += 1
-                    
+
                     if regexDB:
                         pfb['python_blacklist'] = True
                         debug('Python Blacklist enabled. Reason: REGEX')
@@ -393,7 +392,7 @@ def init(id, env):
                         for row, line in noaaaa_config:
                             line = line.rstrip('\r\n')
                             debug('Parsing no-AAAA domain: {}', line)
-                            data = line.rstrip('\r\n').split(',')
+                            data = line.split(',')
                             if data and len(data) == 2:
                                 domain_name = data[0].lower()
                                 wildcard = data[1] == '1'
@@ -454,10 +453,11 @@ def init(id, env):
                         for row in csv_reader:
                             if row and len(row) >= 6:
                                 # Query Feed/Group/index
-                                domain_name = row[1].lower()
+                                domain_name = row[1]
                                 entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'TLD'};
                                 debug('Parsed Zone Blacklist entry: {}: {}', domain_name, entry)
                                 zoneDB[domain_name] = entry
+                                segmentSizeDB['zoneDB'] = min(segmentSizeDB['zoneDB'], domain_name.count('.') + 1)
                             else:
                                 sys.stderr.write("[pfBlockerNG]: Failed to parse: {}: {}" .format(pfb['pfb_py_zone'], row))
 
@@ -482,12 +482,13 @@ def init(id, env):
                                     debug('Parsed Blacklist entry (Regex): {}: {}', expression, entry)
                                     regexDataDB[expression] = entry
                                 elif len(row) == 7 and row[6] == '1':
-                                    domain_name = row[1].lower()
+                                    domain_name = row[1]
                                     entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL'}
                                     debug('Parsed Blacklist entry (Wildcard): {}: {}', domain_name, entry)
                                     wildcardDataDB[domain_name] = entry
+                                    segmentSizeDB['wildcardDataDB'] = min(segmentSizeDB['wildcardDataDB'], domain_name.count('.') + 1)
                                 else:
-                                    domain_name = row[1].lower()
+                                    domain_name = row[1]
                                     entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]),'type': 'DNSBL'}
                                     debug('Parsed Blacklist entry (Domain): {}: {}', domain_name, entry)
                                     dataDB[domain_name] = entry
@@ -513,13 +514,13 @@ def init(id, env):
                             for row in csv_reader:
                                 if row and (len(row) == 2 or len(row) == 7):
                                     if len(row) == 2:
-
-                                        domain_name = row[0].lower()
+                                        domain_name = row[0]
                                         entry = {'log': '1', 'feed': 'DNSBL_WHITELIST', 'group': 'USER'}
 
                                         if row[1] == '1':
                                             debug('Parsed Whitelist entry (Wildcard): {}: {}', domain_name, entry)
                                             wildcardWhiteDB[domain_name] = entry
+                                            segmentSizeDB['wildcardWhiteDB'] = min(segmentSizeDB['wildcardWhiteDB'], domain_name.count('.') + 1)
                                         else:
                                             debug('Parsed Whitelist entry (Domain): {}: {}', domain_name, entry)
                                             whiteDB[domain_name] = entry
@@ -533,12 +534,13 @@ def init(id, env):
                                             regexWhiteDB[expression] = entry
                                         else:
                                             if row[6] == '1':
-                                                domain_name = row[1].lower()
+                                                domain_name = row[1]
                                                 entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
                                                 debug('Parsed Whitelist entry (Wildcard): {}: {}', domain_name, entry)
                                                 wildcardWhiteDB[domain_name] = entry
+                                                segmentSizeDB['wildcardWhiteDB'] = min(segmentSizeDB['wildcardWhiteDB'], domain_name.count('.') + 1)
                                             else:
-                                                domain_name = row[1].lower()
+                                                domain_name = row[1]
                                                 entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
                                                 debug('Parsed Whitelist entry (Domain): {}: {}', domain_name, entry)
                                                 whiteDB[domain_name] = entry
@@ -556,7 +558,7 @@ def init(id, env):
                         with open(pfb['pfb_py_hsts']) as hsts:
                             debug('HSTS data found: {}', pfb['python_hsts'])
                             for line in hsts:
-                                value = line.rstrip('\r\n').lower()
+                                value = line.rstrip('\r\n')
                                 debug('Parsed HSTS entry: {}', value)
                                 hstsDB.add(value)
                     except Exception as e:
@@ -952,15 +954,16 @@ def log_entry(line, log):
             with open(log, 'a') as append_log:
                 append_log.write(line)
                 append_log.write('\n')
+                break
         except Exception as e:
             if i == 4:
-                sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}" .format(i, e))
-            time.sleep(0.25)
+                sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}".format(i, e))
+            else:
+                time.sleep(0.25)
             pass
             continue
-        break
 
-def _debug(format_str, *args, stack_height=1):
+def _debug(format_str, *args):
     global pfb
     if pfb.get('python_debug') and isinstance(format_str, str):
         with open('/var/log/pfblockerng/py_debug.log', 'a') as append_log:
@@ -977,13 +980,14 @@ def __debug(format_str, *args):
     for i in range(1,5):
         try:
             _debug(format_str, *args)
+            break
         except Exception as e:
             if i == 4:
-                sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}" .format(i, e))
-            time.sleep(0.25)
+                sys.stderr.write("[pfBlockerNG]: log_entry: {}: {}".format(i, e))
+            else:
+                time.sleep(0.25)
             pass
             continue
-        break
 
 def debug(format_str, *args):
     global pfb
@@ -1291,7 +1295,7 @@ def inform_super(id, qstate, superqstate, qdata):
     return True
 
 @traced
-def lookup(db, name, try_www=False, tld_limit=0):
+def lookup(db, name, try_www=False, tld_limit=1):
     debug('Checking DB for: {}', name)
 
     entry = db.get(name)
@@ -1336,7 +1340,7 @@ def regex_lookup(db, name):
 @traced
 @exception_logger
 def operate(id, event, qstate, qdata):
-    global pfb, threads, dataDB, zoneDB, wildcardDataDB, regexDataDB, hstsDB, whiteDB, wildcardWhiteDB, regexWhiteDB, excludeDB, excludeAAAADB, excludeSS, dnsblDB, noAAAADB, gpListDB, safeSearchDB, feedGroupDB
+    global pfb, threads, dataDB, zoneDB, wildcardDataDB, regexDataDB, hstsDB, whiteDB, wildcardWhiteDB, regexWhiteDB, excludeDB, excludeAAAADB, excludeSS, dnsblDB, noAAAADB, gpListDB, safeSearchDB, feedGroupDB, segmentSizeDB
 
     qstate_valid = False
     try:
@@ -1640,12 +1644,12 @@ def operate(id, event, qstate, qdata):
                         # Determine TLD segment matches
                         if not result and wildcardDataDB:
                             debug('[{}]: checking Blacklist DB (Wildcard) for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(wildcardDataDB, q_name, tld_limit=pfb['python_tld_seg'])
+                            (result, b_eval) = lookup(wildcardDataDB, q_name, tld_limit=segmentSizeDB['wildcardDataDB'])
 
                         # Determine if domain is in DNSBL 'zone' database (log to dnsbl.log)
                         if not result and zoneDB:
                             debug('[{}]: checking Zone DB for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(zoneDB, q_name)
+                            (result, b_eval) = lookup(zoneDB, q_name, tld_limit=segmentSizeDB['zoneDB'])
 
                         # Block via Domain Name Regex
                         if not result and regexDataDB:
@@ -1672,7 +1676,7 @@ def operate(id, event, qstate, qdata):
 
                         # Block IDN or 'xn--' Domains
                         if not isFound and pfb['python_idn'] and (q_name.startswith('xn--') or '.xn--' in q_name):
-                            debug("[{}]: blocked IDN or 'xn--': {}: {}", q_name_original, q_name, tld)
+                            debug("[{}]: blocked IDN or 'xn--': {}", q_name_original, q_name)
                             isFound = True
                             feed = 'IDN'
                             group = 'DNSBL_IDN'
@@ -1706,9 +1710,10 @@ def operate(id, event, qstate, qdata):
                         # Determine TLD segment matches
                         if not result and wildcardWhiteDB:
                             debug('[{}]: checking Whitelist DB (Wildcard) for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(wildcardWhiteDB, q_name, tld_limit=pfb['python_tld_seg'])
+                            tld_limit = segmentSizeDB['wildcardWhiteDB']
+                            (result, b_eval) = lookup(wildcardWhiteDB, q_name, tld_limit=tld_limit)
                             if not result and isCNAME:
-                                (result, b_eval) = lookup(wildcardWhiteDB, q_name_original, tld_limit=pfb['python_tld_seg'])
+                                (result, b_eval) = lookup(wildcardWhiteDB, q_name_original, tld_limit=tld_limit)
 
                         # Allow via Domain Name Regex
                         if not result and regexWhiteDB:
