@@ -8395,9 +8395,9 @@ function sync_package_pfblockerng($cron='') {
 
 								// Convert wildcards to regular expressions
 								// The asterisk must not match any of the field limiters we use
-								$w_search = array( '\\*', '\\-' );
-								$w_replace = array( '[^",[:space:]]*', '-' );
-								$w_replace_py = array( '[^"\\x2c\\s]*', '-' );
+								$w_search = array( '*', '.' );
+								$w_replace = array( '[^",[:space:]]*', '\\.' );
+								$w_replace_py = array( '[^"\\x2c\\s]*', '\\.' );
 
 								// Variables for parsing Adblock-style lists
 								$adblock = FALSE;
@@ -8484,7 +8484,7 @@ function sync_package_pfblockerng($cron='') {
 
 														if (strpos($line, '*') !== FALSE) {
 															// Quote for Regular Expression, except * and -
-															$line = str_replace($w_search, $w_replace_py, preg_quote($line));
+															$line = str_replace($w_search, $w_replace_py, $line);
 															// 2 = regular expression flag
 															$whitelist_data = "(?:^|\\.){$line},2\n";
 														} 
@@ -8513,7 +8513,7 @@ function sync_package_pfblockerng($cron='') {
 													}
 													else {
 														// Quote for Regular Expression, except * and -
-														$line = str_replace($w_search, $w_replace, preg_quote($line));
+														$line = str_replace($w_search, $w_replace, $line);
 
 														// Safeguarding, but should never happen
 														if (empty($line)) {
@@ -8533,7 +8533,7 @@ function sync_package_pfblockerng($cron='') {
 												if($pfb['dnsbl_py_blacklist']) {
 													if (strpos($line, '*') !== FALSE) {
 														// Quote for Regular Expression, except * and -
-														$line = str_replace($w_search, $w_replace_py, preg_quote($line));
+														$line = str_replace($w_search, $w_replace_py, $line);
 														// 2 = regular expression flag
 														$domain_data = ",(?:^|\\.){$line},,{$logging_type},{$header},{$alias},2\n";
 
