@@ -497,16 +497,29 @@ dnsbl_scrub() {
 }
 
 dnsbl_assemble_whitelistfile() {
+	if [ "${dedup}" == '' ]; then
+		prefix='[".]'
+		star='[^"[:space:]]*'
+		suffix=' 60'
+	else
+		prefix='[,.]'
+		star='[^,[:space:]]*'
+		suffix=','
+	fi
+
 	# Process all Whitelist files
 	if [ "$(ls -A ${pfbdomain}*.whitelist 2>/dev/null)" ]; then
-		find "${pfbdomain}"*.whitelist | xargs cat | sort | uniq > "${dnsbl_whitelist}"
+		find "${pfbdomain}"*.whitelist | xargs cat  | sort | uniq | cut -d',' -f1 | \
+			sed 's/\./\\./g' | sed "s/*/${star}/g" | sed "s/^/${prefix}/" | sed "s/$/${suffix}/" > "${dnsbl_whitelist}"
 	fi
 }
 
 # Remove Whitelisted Domains and Sub-Domains, if configured
 dnsbl_remove_whitelisted() {
-	
-	echo "  Processing DNSBL whitelists for ${alias}" >> "${whitelistlog}"
+
+	printf "\nProcessing DNSBL whitelists for ${alias}" >> "${whitelistlog}"
+
+	counto="$(grep -c ^ ${pfbdomain}${alias}.txt)"
 
 	# Process all Whitelist files
 	if [ -s "${pfbdomain}${alias}.txt" ] && [ -s "${dnsbl_whitelist}" ]; then
@@ -536,7 +549,7 @@ dnsbl_remove_whitelisted() {
 					fi
 				fi
 
-				echo "  Whitelist count (DNSBL): ${countwl}" | tee -a "${whitelistlog}"
+				echo "  Whitelist count (DNSBL): ${countwl}" >> "${whitelistlog}"
 				echo "  Whitelist domains (DNSBL): [" >> "${whitelistlog}"
 				for i in ${data}; do
 					echo "      $i" >> "${whitelistlog}"
@@ -554,7 +567,12 @@ dnsbl_remove_whitelisted() {
 	fi
 
 	countf="$(grep -c ^ ${pfbdomain}${alias}.txt)"
-	echo "  Final domain count: ${countf}" | tee -a "${whitelistlog}"
+
+	echo '  ------------------------------'
+	printf "%-10s %-10s %-10s\n" '  Orig.' '# Removed' 'Final'
+	echo '  ------------------------------'
+	printf "%-10s %-10s %-10s\n" "  ${counto}" "${countwl}" "${countf}"
+	echo '  ------------------------------'
 }
 
 dnsbl_cleanup_whitelistfile() {

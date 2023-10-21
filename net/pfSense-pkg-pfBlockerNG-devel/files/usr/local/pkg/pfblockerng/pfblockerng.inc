@@ -6996,6 +6996,30 @@ function pfb_clear_contents() {
 }
 
 
+function convert_idn($line) {
+	global $pfb;
+
+	// Convert IDN (Unicode domains) to ASCII (punycode)
+	if (!ctype_print($line)) {
+
+		// Convert encodings to UTF-8
+		$line = mb_convert_encoding($line, 'UTF-8',
+			mb_detect_encoding($line, 'UTF-8, ASCII, ISO-8859-1'));
+	
+		$log = "\n  IDN converted: [ {$line} ]\t";
+		$line = idn_to_ascii($line);
+		if (!empty($line)) {
+			pfb_logger("{$log} [ {$line} ]", 1);
+			return $line;
+		} else {
+			return '';
+		}
+	}
+
+	return $line;
+}
+
+
 // Main pfBlockerNG function
 function sync_package_pfblockerng($cron='') {
 	global $g, $config, $pfb, $pfbarr;
@@ -8368,12 +8392,6 @@ function sync_package_pfblockerng($cron='') {
 								// Variables for Adblock-style lists
 								$e_replace = array( '||', '.^', '^' );
 
-								// Convert wildcards to regular expressions
-								// The asterisk must not match any of the field limiters we use
-								$w_search = array( '*', '.' );
-								$w_replace = array( '[^",[:space:]]*', '\\.' );
-								$w_replace_py = array( '[^"\\x2c\\s]*', '\\.' );
-
 								// Variables for parsing Adblock-style lists
 								$adblock = FALSE;
 								$whitelist_data = '';
@@ -8452,16 +8470,22 @@ function sync_package_pfblockerng($cron='') {
 													continue;
 												}
 
+												// Convert IDN (Unicode domains) to ASCII (punycode)
+												$line = convert_idn($line);
+												if (empty($line)) {
+													// Record failed parsed line
+													pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
+													continue;
+												}
+
 												// Special handling for whitelist entries
 												if ($adblock_exclusion) {
 
 													if ($pfb['dnsbl_py_blacklist']) {
 
 														if (strpos($line, '*') !== FALSE) {
-															// Quote for Regular Expression, except * and -
-															$line = str_replace($w_search, $w_replace_py, $line);
 															// 2 = regular expression flag
-															$whitelist_data = "(?:^|\\.){$line},2\n";
+															$whitelist_data = "{$line},2\n";
 														} 
 														else {
 															// Remove leading/trailing dots
@@ -8487,18 +8511,15 @@ function sync_package_pfblockerng($cron='') {
 														}
 													}
 													else {
-														// Quote for Regular Expression, except * and -
-														$line = str_replace($w_search, $w_replace, $line);
-
 														// Safeguarding, but should never happen
 														if (empty($line)) {
 															continue;
 														}
 
-														$whitelist_data = "[\".]{$line} 60\n";
-														$postprocess = TRUE;
+														$whitelist_data = "{$line}\n";
 													}
 
+													$postprocess = TRUE;
 													@fwrite($whandle, $whitelist_data);
 													continue;
 												}
@@ -8507,10 +8528,8 @@ function sync_package_pfblockerng($cron='') {
 												// Otherwise, let the normal processing continue
 												if($pfb['dnsbl_py_blacklist']) {
 													if (strpos($line, '*') !== FALSE) {
-														// Quote for Regular Expression, except * and -
-														$line = str_replace($w_search, $w_replace_py, $line);
 														// 2 = regular expression flag
-														$domain_data = ",(?:^|\\.){$line},,{$logging_type},{$header},{$alias},2\n";
+														$domain_data = ",{$line},,{$logging_type},{$header},{$alias},2\n";
 
 														@fwrite($dhandle, $domain_data);
 														continue;
@@ -8777,23 +8796,16 @@ function sync_package_pfblockerng($cron='') {
 												continue;
 											}
 
+											if (empty($line)) {
+												continue;
+											}
+
 											// Convert IDN (Unicode domains) to ASCII (punycode)
-											if (!ctype_print($line)) {
-
-												// Convert encodings to UTF-8
-												$line = mb_convert_encoding($line, 'UTF-8',
-													mb_detect_encoding($line, 'UTF-8, ASCII, ISO-8859-1'));
-
-												$log = "\n  IDN converted: [ {$line} ]\t";
-												$line = idn_to_ascii($line);
-												if (!empty($line)) {
-													pfb_logger("{$log} [ {$line} ]", 1);
-												}
-												else {
-													// Record failed parsed line
-													pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
-													continue;
-												}
+											$line = convert_idn($line);
+											if (empty($line)) {
+												// Record failed parsed line
+												pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
+												continue;
 											}
 
 											// Remove leading/trailing dots
@@ -9003,7 +9015,12 @@ function sync_package_pfblockerng($cron='') {
 			$log = "\n===[  DNSBL Postprocess  ]============================================\n";
 			pfb_logger("{$log}", 7);
 
-			exec("{$pfb['script']} dnsbl_assemble_whitelistfile unused unused unused {$elog}");
+			$dup_mode = '';
+			if ($pfb['dnsbl_py_blacklist']) {
+				$dup_mode = 'python';
+			}
+
+			exec("{$pfb['script']} dnsbl_assemble_whitelistfile unused unused {$dup_mode} {$elog}");
 
 			// Process Whitelists
 			foreach ($postprocess_dnsbl as $header_esc) {
@@ -9015,10 +9032,6 @@ function sync_package_pfblockerng($cron='') {
 				$pfb_alexa = 'Disabled';
 
 				// DNSBL python requires a different deduplication process
-				$dup_mode = '';
-				if ($pfb['dnsbl_py_blacklist']) {
-					$dup_mode = 'python';
-				}
 
 				// Call script to process DNSBL Whitelisting
 				exec("{$pfb['script']} dnsbl_remove_whitelisted {$header_esc} {$pfb_alexa} {$dup_mode} {$elog}");
@@ -9450,7 +9463,6 @@ function sync_package_pfblockerng($cron='') {
 
 	// Remove temp file
 	unlink_if_exists("{$pfb['geoip_tmp']}");
-	unlink_if_exists("{$pfb['whitelistlog']}"); 
 
 	#################################################
 	#	Download and Collect IPv4/IPv6 lists	#

@@ -352,6 +352,8 @@ def init(id, env):
 
             debug('Python mode enabled')
 
+            regex_translation = str.maketrans({'.': r'\.', '*': r'.*'})
+
             # Enable the Blacklist functions (IDN)
             if pfb['python_idn']:
                 pfb['python_blacklist'] = True
@@ -453,9 +455,9 @@ def init(id, env):
                         for row in csv_reader:
                             if row and len(row) >= 6:
                                 # Query Feed/Group/index
-                                domain_name = row[1]
-                                entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'TLD'};
-                                debug('Parsed Zone Blacklist entry: {}: {}', domain_name, entry)
+                                domain_name = dedup(row[1])
+                                entry = {'key': domain_name, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'TLD'};
+                                debug('Parsed Zone Blacklist entry: {}', entry)
                                 zoneDB[domain_name] = entry
                                 segmentSizeDB['zoneDB'] = min(segmentSizeDB['zoneDB'], domain_name.count('.') + 1)
                             else:
@@ -478,29 +480,34 @@ def init(id, env):
                             if row and (len(row) == 6 or len(row) == 7):
                                 if len(row) == 7 and row[6] == '2':
                                     expression = row[1]
-                                    entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL', 'regex': re.compile(row[1], re.IGNORECASE)}
-                                    debug('Parsed Blacklist entry (Regex): {}: {}', expression, entry)
-                                    regexDataDB[expression] = entry
+                                    python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
+                                    try:
+                                        entry = {'key': expression, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL', 'regex': re.compile(python_regex, re.IGNORECASE)}
+                                        debug('Parsed Blacklist entry (Regex): {}', entry)
+                                        regexDataDB[expression] = entry
+                                    except Exception as e:
+                                        sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {} => {}: {}".format(pfb['pfb_py_data'], expression, python_regex, e))
+                                        pass
                                 elif len(row) == 7 and row[6] == '1':
-                                    domain_name = row[1]
-                                    entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL'}
-                                    debug('Parsed Blacklist entry (Wildcard): {}: {}', domain_name, entry)
+                                    domain_name = dedup(row[1])
+                                    entry = {'key': domain_name, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL'}
+                                    debug('Parsed Blacklist entry (Wildcard): {}', entry)
                                     wildcardDataDB[domain_name] = entry
                                     segmentSizeDB['wildcardDataDB'] = min(segmentSizeDB['wildcardDataDB'], domain_name.count('.') + 1)
                                 else:
-                                    domain_name = row[1]
-                                    entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]),'type': 'DNSBL'}
-                                    debug('Parsed Blacklist entry (Domain): {}: {}', domain_name, entry)
+                                    domain_name = dedup(row[1])
+                                    entry = {'key': domain_name, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]),'type': 'DNSBL'}
+                                    debug('Parsed Blacklist entry (Domain): {}', entry)
                                     dataDB[domain_name] = entry
 
                             else:
-                                sys.stderr.write("[pfBlockerNG]: Failed to parse: {}: {}" .format(pfb['pfb_py_data'], row))
+                                sys.stderr.write("[pfBlockerNG]: Failed to parse: {}: {}".format(pfb['pfb_py_data'], row))
                         
                         if dataDB or wildcardDataDB or regexDataDB:
                             pfb['python_blacklist'] = True
                             debug('Python Blacklist enabled. Reason: Blacklist data')
                 except Exception as e:
-                    sys.stderr.write("[pfBlockerNG]: Failed to load: {}: {}" .format(pfb['pfb_py_data'], e))
+                    sys.stderr.write("[pfBlockerNG]: Failed to load: {}: {}".format(pfb['pfb_py_data'], e))
                     pass
 
             if pfb['python_blacklist']:
@@ -514,35 +521,40 @@ def init(id, env):
                             for row in csv_reader:
                                 if row and (len(row) == 2 or len(row) == 7):
                                     if len(row) == 2:
-                                        domain_name = row[0]
-                                        entry = {'log': '1', 'feed': 'DNSBL_WHITELIST', 'group': 'USER'}
+                                        domain_name = dedup(row[0])
+                                        entry = {'key': domain_name, 'log': '1', 'feed': 'DNSBL_WHITELIST', 'group': 'USER'}
 
                                         if row[1] == '1':
-                                            debug('Parsed Whitelist entry (Wildcard): {}: {}', domain_name, entry)
+                                            debug('Parsed Whitelist entry (Wildcard): {}', entry)
                                             wildcardWhiteDB[domain_name] = entry
                                             segmentSizeDB['wildcardWhiteDB'] = min(segmentSizeDB['wildcardWhiteDB'], domain_name.count('.') + 1)
                                         else:
-                                            debug('Parsed Whitelist entry (Domain): {}: {}', domain_name, entry)
+                                            debug('Parsed Whitelist entry (Domain): {}', entry)
                                             whiteDB[domain_name] = entry
 
                                     else:
 
                                         if row[6] == '2':
                                             expression = row[1]
-                                            entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'regex': re.compile(expression, re.IGNORECASE)}
-                                            debug('Parsed Whitelist entry (Regex): {}: {}', expression, entry)
-                                            regexWhiteDB[expression] = entry
+                                            python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
+                                            try:
+                                                entry = {'key': expression, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'regex': re.compile(python_regex, re.IGNORECASE)}
+                                                debug('Parsed Whitelist entry (Regex): {}', entry)
+                                                regexWhiteDB[expression] = entry
+                                            except Exception as e:
+                                                sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {} => {}: {}".format(pfb['pfb_py_whitelist'], expression, python_regex, e))
+                                                pass
                                         else:
                                             if row[6] == '1':
-                                                domain_name = row[1]
-                                                entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
-                                                debug('Parsed Whitelist entry (Wildcard): {}: {}', domain_name, entry)
+                                                domain_name = dedup(row[1])
+                                                entry = {'key': domain_name, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
+                                                debug('Parsed Whitelist entry (Wildcard): {}', entry)
                                                 wildcardWhiteDB[domain_name] = entry
                                                 segmentSizeDB['wildcardWhiteDB'] = min(segmentSizeDB['wildcardWhiteDB'], domain_name.count('.') + 1)
                                             else:
-                                                domain_name = row[1]
-                                                entry = {'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
-                                                debug('Parsed Whitelist entry (Domain): {}: {}', domain_name, entry)
+                                                domain_name = dedup(row[1])
+                                                entry = {'key': domain_name, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5])}
+                                                debug('Parsed Whitelist entry (Domain): {}', entry)
                                                 whiteDB[domain_name] = entry
 
                                 else:
@@ -609,20 +621,21 @@ def init(id, env):
     else:
         log_info('[pfBlockerNG]: Failed to load ini configuration. Ini file missing.')
 
+    debug('------------------------------------------------')
     debug('Initialization complete. Summary of parsed data:')
     debug('------------------------------------------------')
-    debug('REGEX count: {}', len(regexDB))
-    debug('Zone count: {}', len(zoneDB))
+    debug('DNSBL count (Zone): {}', len(zoneDB))
     debug('DNSBL count (Domain): {}', len(dataDB))
     debug('DNSBL count (Wildcard): {}', len(wildcardDataDB))
     debug('DNSBL count (Regex): {}', len(regexDataDB))
     debug('Whitelist count (Domain): {}', len(whiteDB))
     debug('Whitelist count (Wildcard): {}', len(wildcardWhiteDB))
     debug('Whitelist count (Regex): {}', len(regexWhiteDB))
-    debug('No-AAAA count (Regex): {}', len(noAAAADB))
-    debug('Group Policy count (Regex): {}', len(gpListDB))
-    debug('Safe Search count (Regex): {}', len(safeSearchDB))
-    debug('HSTS count (Regex): {}', len(hstsDB))
+    debug('Whitelist count (User Regex): {}', len(regexDB))
+    debug('No-AAAA count: {}', len(noAAAADB))
+    debug('Group Policy count: {}', len(gpListDB))
+    debug('Safe Search count: {}', len(safeSearchDB))
+    debug('HSTS count: {}', len(hstsDB))
     debug('------------------------------------------------')
 
     log_info('[pfBlockerNG]: init_standard script loaded')
@@ -1635,31 +1648,32 @@ def operate(id, event, qstate, qdata):
                     if pfb['python_blocking']:
 
                         result = None
+                        checked = None
 
                         # Determine if domain is in DNSBL 'data' database (log to dnsbl.log)
                         if dataDB:
                             debug('[{}]: checking Blacklist DB (Domain) for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(dataDB, q_name, tld_limit=-1)
+                            (result, checked) = lookup(dataDB, q_name, tld_limit=-1)
 
                         # Determine TLD segment matches
                         if not result and wildcardDataDB:
                             debug('[{}]: checking Blacklist DB (Wildcard) for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(wildcardDataDB, q_name, tld_limit=segmentSizeDB['wildcardDataDB'])
+                            (result, checked) = lookup(wildcardDataDB, q_name, tld_limit=segmentSizeDB['wildcardDataDB'])
 
                         # Determine if domain is in DNSBL 'zone' database (log to dnsbl.log)
                         if not result and zoneDB:
                             debug('[{}]: checking Zone DB for: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(zoneDB, q_name, tld_limit=segmentSizeDB['zoneDB'])
+                            (result, checked) = lookup(zoneDB, q_name, tld_limit=segmentSizeDB['zoneDB'])
 
                         # Block via Domain Name Regex
                         if not result and regexDataDB:
                             debug('[{}]: checking Blacklist DB (Regex) for: {}', q_name_original, q_name)
-                            (result, b_eval) = regex_lookup(regexDataDB, q_name)
+                            (result, checked) = regex_lookup(regexDataDB, q_name)
                         
                         # Set log data, if we got a match
                         if result:
                             debug('[{}]: found Blacklist entry for: {}: {}', q_name_original, q_name, result)
-                            (log_type, feed, group, b_type) = (result['log'], result['feed'], result['group'], result['type'])
+                            (key, log_type, feed, group, b_type, b_eval) = (result['key'], result['log'], result['feed'], result['group'], result['type'], checked)
                             isFound = True
 
 
@@ -1692,6 +1706,7 @@ def operate(id, event, qstate, qdata):
                                 group = 'DNSBL_Regex'
 
                         if isFound:
+                            key = q_name
                             b_eval = q_name
                             log_type = '1'
                     
@@ -1699,33 +1714,34 @@ def operate(id, event, qstate, qdata):
                         debug('[{}]: domain blacklisted: {}', q_name_original, q_name)
 
                         result = None
+                        checked = None
 
                         # Validate domain in DNSBL Whitelist
                         if whiteDB:
                             debug('[{}]: checking whitelist: {}', q_name_original, q_name)
-                            (result, b_eval) = lookup(whiteDB, q_name, try_www=True, tld_limit=-1)
+                            (result, checked) = lookup(whiteDB, q_name, try_www=True, tld_limit=-1)
                             if not result and isCNAME:
-                                (result, b_eval) = lookup(whiteDB, q_name_original, try_www=True, tld_limit=-1)
+                                (result, checked) = lookup(whiteDB, q_name_original, try_www=True, tld_limit=-1)
 
                         # Determine TLD segment matches
                         if not result and wildcardWhiteDB:
                             debug('[{}]: checking Whitelist DB (Wildcard) for: {}', q_name_original, q_name)
                             tld_limit = segmentSizeDB['wildcardWhiteDB']
-                            (result, b_eval) = lookup(wildcardWhiteDB, q_name, tld_limit=tld_limit)
+                            (result, checked) = lookup(wildcardWhiteDB, q_name, tld_limit=tld_limit)
                             if not result and isCNAME:
-                                (result, b_eval) = lookup(wildcardWhiteDB, q_name_original, tld_limit=tld_limit)
+                                (result, checked) = lookup(wildcardWhiteDB, q_name_original, tld_limit=tld_limit)
 
                         # Allow via Domain Name Regex
                         if not result and regexWhiteDB:
                             debug('[{}]: checking Whitelist DB (Regex) for: {}', q_name_original, q_name)
-                            (result, b_eval) = regex_lookup(regexWhiteDB, q_name)
+                            (result, checked) = regex_lookup(regexWhiteDB, q_name)
                             if not result and isCNAME:
-                                (result, b_eval) = regex_lookup(regexWhiteDB, q_name_original)
+                                (result, checked) = regex_lookup(regexWhiteDB, q_name_original)
 
                         # Set log data, if we got a match
                         if result:
                             debug('[{}]: found Whitelist entry for: {}: {}', q_name_original, q_name, result)
-                            (log_type, feed, group, b_type) = (result['log'], result['feed'], result['group'], result['type'])
+                            (key, log_type, feed, group, b_type, b_eval) = (result['key'], result['log'], result['feed'], result['group'], result['type'], checked)
                             isInWhitelist = True
 
                     # Add domain to excludeDB to skip subsequent blacklist validation
@@ -1764,7 +1780,7 @@ def operate(id, event, qstate, qdata):
                                         q = q[-1]
 
                         # Skip subsequent DNSBL validation for domain, and add domain to dict for get_details_dnsbl function
-                        entry = {'qname': q_name, 'b_type': b_type, 'p_type': p_type, 'log': log_type, 'feed': feed, 'group': group, 'b_eval': b_eval }
+                        entry = {'qname': q_name, 'b_type': b_type, 'p_type': p_type, 'key': key, 'log': log_type, 'feed': feed, 'group': group, 'b_eval': b_eval }
                         debug('[{}]: adding entry to DNSBL cache: {}: {}', q_name_original, q_name, entry)
                         dnsblDB[q_name] = entry
 
@@ -1774,7 +1790,7 @@ def operate(id, event, qstate, qdata):
 
                         # Skip subsequent DNSBL validation for original domain (CNAME validation), and add domain to dict for get_details_dnsbl function
                         if isCNAME and dnsblDB.get(q_name_original) is None:
-                            entry = {'qname': q_name_original, 'b_type': b_type, 'p_type': p_type, 'log': log_type, 'feed': feed, 'group': group, 'b_eval': b_eval }
+                            entry = {'qname': q_name_original, 'b_type': b_type, 'p_type': p_type, 'key': key, 'log': log_type, 'feed': feed, 'group': group, 'b_eval': b_eval }
                             debug('[{}]: adding entry to DNSBL cache: {}: {}', q_name_original, q_name_original, entry)
                             dnsblDB[q_name_original] = entry
 
