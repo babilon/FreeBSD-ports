@@ -517,7 +517,7 @@ dnsbl_assemble_whitelistfile() {
 # Remove Whitelisted Domains and Sub-Domains, if configured
 dnsbl_remove_whitelisted() {
 
-	printf "\nProcessing DNSBL whitelists for ${alias}" >> "${whitelistlog}"
+	printf "\nProcessing DNSBL whitelists for ${alias}\n" >> "${whitelistlog}"
 
 	counto="$(grep -c ^ ${pfbdomain}${alias}.txt)"
 
