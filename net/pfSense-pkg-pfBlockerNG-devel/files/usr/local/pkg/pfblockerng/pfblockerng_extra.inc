@@ -26,7 +26,7 @@ function pfb_prune_duplicates() {
     $pfb['prune_script'] = '/usr/local/pkg/pfblockerng/pfb_dnsbl_prune.py';
     $pfb['python3'] = '/usr/local/bin/python3.11';
     #exec("{$pfb['python3']} {$pfb['prune_script']} {$pfb['dnsdir']} .fat .txt standard /var/log/pfblockerng/py_prune_debug.log");
-    exec("{$pfb['python3']} {$pfb['prune_script']} {$pfb['dnsdir']} .fat .txt pointer");
+    exec("{$pfb['python3']} {$pfb['prune_script']} {$pfb['dnsdir']} .fat .txt --method pointer");
     #exec("{$pfb['python3']} {$pfb['prune_script']} {$pfb['dnsdir']} .fat .txt standard");
 }
 ?>
