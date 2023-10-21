@@ -505,7 +505,7 @@ def init(id, env):
 
             if pfb['python_blacklist']:
 
-                # Collect user-defined Whitelist, TOP1M and downloaded Whitelists
+                # Collect user-defined and downloaded Whitelists
                 if os.path.isfile(pfb['pfb_py_whitelist']):
                     try:
                         with open(pfb['pfb_py_whitelist']) as csv_file:

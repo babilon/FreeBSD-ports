@@ -2443,31 +2443,6 @@ function pfb_unbound_python_whitelist($mode='') {
 		}
 	}
 
-	if (file_exists("{$pfb['dbdir']}/pfbalexawhitelist.txt")) {
-		if (($handle = @fopen("{$pfb['dbdir']}/pfbalexawhitelist.txt", 'r')) !== FALSE) {
-			while (($line = @fgets($handle)) !== FALSE) {
-				$line = trim($line);
-				if (!empty($line)) {
-					// Already processed -- no need to re-test for TLDs
-					$csvline = str_getcsv($line);
-					$domain = empty($csvline[0]) ? $csvline[1] : $csvline[0];
-	
-					// 0 = literal
-					// 1 = wildcard
-					if (substr($domain, 0, 1) == '.') {
-						$domain = ltrim($domain, '.');
-						$dnsbl_whitelist[] = ",{$domain},,1,DNSBL_WHITELIST,TOP1M,1";
-					} else {
-						$dnsbl_whitelist[] = ",{$domain},,1,DNSBL_WHITELIST,TOP1M,0";
-					}
-				}
-			}
-		}
-		if ($handle) {
-			@fclose($handle);
-		}
-	}
-
 	$whitelist_files = glob("{$pfb['dnsdir']}/*.whitelist");
 	foreach($whitelist_files as $file) {
 		if (($handle = @fopen($file, 'r')) !== FALSE) {
@@ -9033,16 +9008,11 @@ function sync_package_pfblockerng($cron='') {
 			// Process Whitelists
 			foreach ($postprocess_dnsbl as $header_esc) {
 
-				$log = "\n[ ${header_esc} ]${logtab} Processing Whitelist\n";
+				$log = "\n[ ${header_esc} ]${logtab} Processing downloaded whitelist entries\n";
 				pfb_logger("{$log}", 7);
 
-				// Bypass TOP1M whitelist, if user configured
+				// Ignore TOP1M whitelist at this stage
 				$pfb_alexa = 'Disabled';
-				if ($pfb['dnsbl_alexa'] == 'on' &&
-				    $list['filter_alexa'] == 'on' &&
-				    file_exists("{$pfb['dbdir']}/pfbalexawhitelist.txt")) {
-					$pfb_alexa = 'on';
-				}
 
 				// DNSBL python requires a different deduplication process
 				$dup_mode = '';
@@ -9480,6 +9450,7 @@ function sync_package_pfblockerng($cron='') {
 
 	// Remove temp file
 	unlink_if_exists("{$pfb['geoip_tmp']}");
+	unlink_if_exists("{$pfb['whitelistlog']}"); 
 
 	#################################################
 	#	Download and Collect IPv4/IPv6 lists	#

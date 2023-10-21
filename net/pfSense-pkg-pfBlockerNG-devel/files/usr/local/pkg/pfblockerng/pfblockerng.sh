@@ -376,7 +376,7 @@ dnsbl_scrub() {
 	sort "${pfbdomain}${alias}.bk" | uniq > "${pfbdomain}${alias}.bk2"
 	countu="$(grep -c ^ ${pfbdomain}${alias}.bk2)"
 
-	if ! [ "${dedup}" == 'python' ] && [ -d "${pfbdomain}" ] && [ "$(ls -A ${pfbdomain}*.txt 2>/dev/null)" ]; then
+	if [ -d "${pfbdomain}" ] && [ "$(ls -A ${pfbdomain}*.txt 2>/dev/null)" ]; then
 		find "${pfbdomain}"*.txt ! -name "${alias}.txt" | xargs cat > "${domainmaster}"
 
 		# Only execute awk command, if master domain file contains data.
@@ -386,8 +386,10 @@ dnsbl_scrub() {
 			# Unbound blocking mode dedup
 			if [ "${dedup}" == '' ]; then
 				awk 'FNR==NR{a[$2];next}!($2 in a)' "${domainmaster}" "${pfbdomain}${alias}.bk2" > "${pfbdomain}${alias}.bk"
+
+			# Unbound python blocking mode dedup
 			else
-				awk -F',' 'FNR==NR{a[$2];next}!($2 in a)' "${domainmaster}" "${pfbdomain}${alias}.bk2" > "${pfbdomain}${alias}.bk"
+				awk -F',' 'FNR==NR{a[$2, $7];next}!(($2, $7) in a)' "${domainmaster}" "${pfbdomain}${alias}.bk2" > "${pfbdomain}${alias}.bk"
 			fi
 		fi
 
@@ -398,7 +400,7 @@ dnsbl_scrub() {
 
 	countf="$(grep -c ^ ${pfbdomain}${alias}.bk)"
 	countd="$((countu - countf))"
-	rm -f "${pfbdomain}${alias}.bk2" 
+	rm -f "${pfbdomain}${alias}.bk2"
 
 	# Sort and count the AdBlock exclusions
 	if [ -s "${pfbdomain}${alias}.wk" ]; then
@@ -409,8 +411,47 @@ dnsbl_scrub() {
 		countw=0
 	fi
 
+	# Remove Whitelisted Domains and Sub-Domains, if configured
+	if [ -s "${pfbdnsblsuppression}" ] && [ -s "${pfbdomain}${alias}.bk" ]; then
+		printf "\nProcessing User whitelist for ${alias}\n" >> "${whitelistlog}"
+
+		/usr/local/bin/ggrep -vFi -f "${pfbdnsblsuppression}" "${pfbdomain}${alias}.bk" > "${pfbdomain}${alias}.bk2"
+		countx="$(grep -c ^ ${pfbdomain}${alias}.bk2)"
+		countwu="$((countf - countx))"
+
+		if [ "${countw}" -gt 0 ]; then
+			if [ "${dedup}" == '' ]; then
+				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk2 ${pfbdomain}${alias}.bk | \
+					cut -d '"' -f2 | cut -d ' ' -f1 | sort | uniq)"
+			else
+				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk2 ${pfbdomain}${alias}.bk | \
+					cut -d ',' -f2 | sort | uniq)"
+			fi
+
+			if [ -z "${data}" ]; then
+				if [ "${dedup}" == '' ]; then
+					data="$(cut -d '"' -f2 ${pfbdomain}${alias}.bk | cut -d ' ' -f1 | sort | uniq)"
+				else
+					data="$(cut -d ',' -f2 ${pfbdomain}${alias}.bk | sort | uniq)"
+				fi
+			fi
+
+			echo "  Whitelist count (User): ${countwu}" >> "${whitelistlog}"
+			echo "  Whitelist domains (User): [" >> "${whitelistlog}"
+				for i in ${data}; do
+					echo "      $i" >> "${whitelistlog}"
+				done
+			echo "  ]"  >> "${whitelistlog}"
+			mv -f "${pfbdomain}${alias}.bk2" "${pfbdomain}${alias}.bk"
+		fi
+	else
+		countwu=0
+	fi
+
 	# Process TOP1M Whitelist
-	if ! [ "${dedup}" == 'python' ] && [ "${alexa_enable}" == "on" ] && [ -s "${pfbalexa}" ] && [ -s "${pfbdomain}${alias}.bk" ]; then
+	if [ "${alexa_enable}" == "on" ] && [ -s "${pfbalexa}" ] && [ -s "${pfbdomain}${alias}.bk" ]; then
+		printf "\nProcessing TOP1M whitelist for ${alias}\n" >> "${whitelistlog}"
+
 		countf="$(grep -c ^ ${pfbdomain}${alias}.bk)"
 		/usr/local/bin/ggrep -vFi -f "${pfbalexa}" "${pfbdomain}${alias}.bk" > "${pfbdomain}${alias}.bk2"
 		countx="$(grep -c ^ ${pfbdomain}${alias}.bk2)"
@@ -419,21 +460,26 @@ dnsbl_scrub() {
 		if [ "${counta}" -gt 0 ]; then
 			if [ "${dedup}" == '' ]; then
 				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk2 ${pfbdomain}${alias}.bk | \
-					cut -d '"' -f2 | cut -d ' ' -f1 | sort | uniq | tr '\n' '|')"
+					cut -d '"' -f2 | cut -d ' ' -f1 | sort | uniq)"
 			else
 				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk2 ${pfbdomain}${alias}.bk | \
-					cut -d ',' -f2 | sort | uniq | tr '\n' '|')"
+					cut -d ',' -f2 | sort | uniq)"
 			fi
 
 			if [ -z "${data}" ]; then
 				if [ "${dedup}" == '' ]; then
-					data="$(cut -d '"' -f2 ${pfbdomain}${alias}.bk | cut -d ' ' -f1 | sort | uniq | tr '\n' '|')"
+					data="$(cut -d '"' -f2 ${pfbdomain}${alias}.bk | cut -d ' ' -f1 | sort | uniq)"
 				else
-					data="$(cut -d ',' -f2 ${pfbdomain}${alias}.bk | sort | uniq | tr '\n' '|')"
+					data="$(cut -d ',' -f2 ${pfbdomain}${alias}.bk | sort | uniq)"
 				fi
 			fi
 
-			echo "  TOP1M Whitelist: ${data}"
+			echo "  Whitelist count (TOP1M): ${counta}" >> "${whitelistlog}"
+			echo "  Whitelist domains (TOP1M): [" >> "${whitelistlog}"
+				for i in ${data}; do
+					echo "      $i" >> "${whitelistlog}"
+				done
+			echo "  ]"  >> "${whitelistlog}"
 			mv -f "${pfbdomain}${alias}.bk2" "${pfbdomain}${alias}.bk"
 		fi
 	else
@@ -443,19 +489,11 @@ dnsbl_scrub() {
 	countf="$(grep -c ^ ${pfbdomain}${alias}.bk)"
 	rm -f "${pfbdomain}${alias}.bk2"
 
-	if [ "${dedup}" == 'python' ]; then
-		echo '  ----------------------------------------------------------------------'
-		printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" '  Orig.' 'Unique' '# Dups' '# White' 'Final'
-		echo '  ----------------------------------------------------------------------'
-		printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" "  ${counto}" "${countu}" "${countd}" "${countw}" "${countf}"
-		echo '  ----------------------------------------------------------------------'
-	else
-		echo '  ----------------------------------------------------------------------'
-		printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" '  Orig.' 'Unique' '# Dups' '# White' '# TOP1M' 'Final'
-		echo '  ----------------------------------------------------------------------'
-		printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" "  ${counto}" "${countu}" "${countd}" "${countw}" "${counta}" "${countf}"
-		echo '  ----------------------------------------------------------------------'
-	fi
+	echo '  ----------------------------------------------------------------------'
+	printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" '  Orig.' 'Unique' '# Dups' '# White' '# User' '# TOP1M' 'Final'
+	echo '  ----------------------------------------------------------------------'
+	printf "%-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n" "  ${counto}" "${countu}" "${countd}" "${countw}" "${countwu}" "${counta}" "${countf}"
+	echo '  ----------------------------------------------------------------------'
 }
 
 dnsbl_assemble_whitelistfile() {
@@ -467,42 +505,11 @@ dnsbl_assemble_whitelistfile() {
 
 # Remove Whitelisted Domains and Sub-Domains, if configured
 dnsbl_remove_whitelisted() {
-
-	if ! [ "${dedup}" == 'python' ] && [ -s "${pfbdnsblsuppression}" ] && [ -s "${pfbdomain}${alias}.txt" ]; then
-		countf="$(grep -c ^ ${pfbdomain}${alias}.txt)"
-		/usr/local/bin/ggrep -vFi -f "${pfbdnsblsuppression}" "${pfbdomain}${alias}.txt" > "${pfbdomain}${alias}.bk"
-		countx="$(grep -c ^ ${pfbdomain}${alias}.bk)"
-		countw="$((countf - countx))"
-
-		if [ "${countw}" -gt 0 ]; then
-			if [ "${dedup}" == '' ]; then
-				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk ${pfbdomain}${alias}.txt | \
-					cut -d '"' -f2 | cut -d ' ' -f1 | sort | uniq | tr '\n' '|')"
-			else
-				data="$(awk 'FNR==NR{a[$0];next}!($0 in a)' ${pfbdomain}${alias}.bk ${pfbdomain}${alias}.txt | \
-					cut -d ',' -f2 | sort | uniq | tr '\n' '|')"
-			fi
-
-			if [ -z "${data}" ]; then
-				if [ "${dedup}" == '' ]; then
-					data="$(cut -d '"' -f2 ${pfbdomain}${alias}.txt | cut -d ' ' -f1 | sort | uniq | tr '\n' '|')"
-				else
-					data="$(cut -d ',' -f2 ${pfbdomain}${alias}.txt | sort | uniq | tr '\n' '|')"
-				fi	
-			fi
-
-			echo "  Whitelist (user-defined): ${data}" | tee -a "${whitelistlog}"
-			echo "  Whitelist count (user-defined): ${countw}" | tee -a "${whitelistlog}"
-			mv -f "${pfbdomain}${alias}.bk" "${pfbdomain}${alias}.txt"
-		else
-			rm -f "${pfbdomain}${alias}.bk"
-		fi
-	else
-		countw=0
-	fi
 	
+	echo "  Processing DNSBL whitelists for ${alias}" >> "${whitelistlog}"
+
 	# Process all Whitelist files
-	if ! [ "${dedup}" == 'python' ] && [ -s "${pfbdomain}${alias}.txt" ] && [ -s "${dnsbl_whitelist}" ]; then
+	if [ -s "${pfbdomain}${alias}.txt" ] && [ -s "${dnsbl_whitelist}" ]; then
 
 		# Only execute if whitelist temp file contains data.
 		query_size="$(grep -c ^ ${dnsbl_whitelist})"
@@ -547,8 +554,6 @@ dnsbl_remove_whitelisted() {
 	fi
 
 	countf="$(grep -c ^ ${pfbdomain}${alias}.txt)"
-	countwtotal="$((countw + countwl))"
-	echo "  Whitelist count (total): ${countwtotal}" | tee -a "${whitelistlog}"
 	echo "  Final domain count: ${countf}" | tee -a "${whitelistlog}"
 }
 
