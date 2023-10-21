@@ -480,13 +480,13 @@ def init(id, env):
                             if row and (len(row) == 6 or len(row) == 7):
                                 if len(row) == 7 and row[6] == '2':
                                     expression = row[1]
-                                    python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
                                     try:
+                                        python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
                                         entry = {'key': expression, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'type': 'DNSBL', 'regex': re.compile(python_regex, re.IGNORECASE)}
                                         debug('Parsed Blacklist entry (Regex): {}', entry)
                                         regexDataDB[expression] = entry
                                     except Exception as e:
-                                        sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {} => {}: {}".format(pfb['pfb_py_data'], expression, python_regex, e))
+                                        sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {}: {}".format(pfb['pfb_py_data'], expression, e))
                                         pass
                                 elif len(row) == 7 and row[6] == '1':
                                     domain_name = dedup(row[1])
@@ -536,13 +536,13 @@ def init(id, env):
 
                                         if row[6] == '2':
                                             expression = row[1]
-                                            python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
                                             try:
+                                                python_regex = r'(?:^|\.){}$'.format(expression.translate(regex_translation)) 
                                                 entry = {'key': expression, 'log': dedup(row[3]), 'feed': dedup(row[4]), 'group': dedup(row[5]), 'regex': re.compile(python_regex, re.IGNORECASE)}
                                                 debug('Parsed Whitelist entry (Regex): {}', entry)
                                                 regexWhiteDB[expression] = entry
                                             except Exception as e:
-                                                sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {} => {}: {}".format(pfb['pfb_py_whitelist'], expression, python_regex, e))
+                                                sys.stderr.write("[pfBlockerNG]: Failed to parse regex in file {}: {}: {}".format(pfb['pfb_py_whitelist'], expression, e))
                                                 pass
                                         else:
                                             if row[6] == '1':
