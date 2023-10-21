@@ -1,7 +1,10 @@
 import sys
 import csv
+import re
+import itertools
 from pathlib import Path
 from timeit import default_timer as timer
+import argparse
 
 def nullog(*args):
     return
@@ -14,6 +17,37 @@ def log2file(*args):
             f.write(' ')
         f.write('\n')
 
+class RegExNode:
+    def __init__(self, raw_regex):
+        self.num_matches = 0
+        self.compiled_regex = re.compile(raw_regex)
+        self.output_print = []
+        self._raw_regex = raw_regex
+
+    @property
+    def raw_regex(self):
+        return self._raw_regex
+
+    def kill_on_match(self, di):
+        # yes, the regex.search() may be called on a pruned domain between the
+        # check for alive and match. this is ok as killing twice is harmelss.
+        # the only waste is a domain was checked by two regexes. unlikely that a
+        # 3rd regex would check the same domain. domains will only ever change
+        # from "alive and well" to "dead".
+        if di.alive_and_well and self.compiled_regex.search(di.domain):
+            di.kill = None
+            self.output_print.append(["killed matched %s\n" % di.domain])
+            self.num_matches += 1
+            pass
+
+    def output(self, p):
+        self.output_print.append(p)
+
+    def synopsis(self, t_name):
+        return self.output_print + \
+                [["regex %s" % self.compiled_regex],
+                 ["\tremoved:", self.num_matches]]
+
 class DomainPointer:
     def __init__(self, csv_row, file_row):
         self._domain = csv_row[1]
@@ -24,6 +58,7 @@ class DomainPointer:
         self._rev_domain = self._domain.split('.')
         self.iter_subdomains = reversed(self._rev_domain)
         self._file_row = file_row
+        self._alive_and_well = True
 
     def next_tld(self):
         try:
@@ -47,11 +82,20 @@ class DomainPointer:
     def listname(self):
         return self._listname
 
+    @property
+    def alive_and_well(self):
+        return self._file_row != -1
+
+    @alive_and_well.setter
+    def kill(self, _):
+        self._file_row = -1
+
 class DomainInfo:
     def __init__(self, csv_row, _):
         self.csv_row = csv_row
         self._rev_domain = self.domain.split('.')
         self.iter_subdomains = reversed(self._rev_domain)
+        self._alive_and_well = True
 
     def next_tld(self):
         try:
@@ -74,6 +118,15 @@ class DomainInfo:
     @property
     def listname(self):
         return self.csv_row[4]
+
+    @property
+    def alive_and_well(self):
+        return self._alive_and_well
+
+    @alive_and_well.setter
+    def kill(self, _):
+        log("killed:", self.domain)
+        self._alive_and_well = False
 
 class DomainTree:
     def __init__(self, tld=None, di=None):
@@ -98,7 +151,7 @@ class DomainTree:
 
     def visit_leaves(self, visitor):
         for c in self.children.values():
-            if c.di is not None:
+            if c.di is not None and c.di.alive_and_well:
                 visitor(c.di)
             c.visit_leaves(visitor)
 
@@ -164,12 +217,21 @@ class DomainTree:
 
         return False
 
+def _skip_regex_matches():
+    pass
+
+def _prune_regex_matches():
+    global domainTree, regexNodes
+    for regex in regexNodes:
+        domainTree.visit_leaves(lambda x: regex.kill_on_match(x))
+
 def read_csv(filename, outputfile):
-    global domainTree
-    regexlines = 0
+    global domainTree, regexNodes
     inserted_cnt = 0
     omitted_cnt = 0
     ignored_cnt = 0
+    regexlines = 0
+    cur_row_idx = -1
 
     log("Enter read_csv() with args:", filename, outputfile)
 
@@ -201,6 +263,7 @@ def read_csv(filename, outputfile):
             else:
                 # do not modify the regex rows
                 pfb_py_writer.writerow(row)
+                regexNodes.append(RegExNode(row[1]))
                 regexlines += 1
 
     linesread = (cur_row_idx + 1) - ignored_cnt
@@ -270,22 +333,25 @@ class CsvWriters:
         except KeyError:
             log("csv writer for '%s' was not found!" % listname)
 
-def write_DomainInfos(files_to_read, files_to_write):
+def write_DomainInfos(files_to_read, files_to_write, out_ext):
     global domainTree
 
     log("Writing pruned contents to '*%s' files..." % out_ext)
     with CsvWriters(files_to_write) as csvwriters:
-        def visitor(di):
-            csvwriters.write(di.listname, di.file_row)
+        def visitor(x):
+            if x.alive_and_well:
+                csvwriters.write(x.listname, x.csv_row)
         domainTree.visit_leaves(lambda x: visitor(x))
 
-def write_DomainPointers(files_to_read, files_to_write):
+def write_DomainPointers(files_to_read, files_to_write, out_ext):
     global domainTree
 
     file_refs = dict((fn, []) for fn in files_to_read.keys())
 
     def visitor(x):
-        file_refs[x.listname].append(x.file_row)
+        if x.alive_and_well:
+            file_refs[x.listname].append(x.file_row)
+
     domainTree.visit_leaves(lambda x: visitor(x))
 
     log("Writing pruned contents to '*%s' files..." % out_ext)
@@ -297,6 +363,7 @@ def write_DomainPointers(files_to_read, files_to_write):
                         readers.readline(fn, i))
 
 def process_directory(dirpath, in_ext, out_ext):
+    global domainTree, iter_regexnodes
     files_to_write = {}
     files_to_read = {}
 
@@ -306,58 +373,84 @@ def process_directory(dirpath, in_ext, out_ext):
         prunedfile = fname + out_ext
         log("Found a '*%s' file to read:" % in_ext, p.name)
 
+        # building the tree prunes of duplicates by the 'match strength' for
+        # match strengths equal to '1' which is "Adblock Plus" full domain and
+        # subdomain block. regex, match strength equal to '2' is done before
+        # 'write_csv'
         if read_csv(str(p.absolute()), str(p.parent / prunedfile)):
             files_to_write[fname] = str(p.parent / prunedfile)
             files_to_read[fname] = str(p)
 
+    prune_regex_matches()
+
     if len(files_to_read) and len(files_to_write):
-        write_csv(files_to_read, files_to_write)
+        write_csv(files_to_read, files_to_write, out_ext)
 
 
 domainTree = DomainTree()
+regexNodes = []
 log = nullog
 dataHandlers = {'pointer': (DomainPointer, write_DomainPointers),
                 'standard': (DomainInfo, write_DomainInfos)}
-DomainType = DomainPointer
-write_csv = write_DomainPointers
 
 if __name__ == '__main__':
-    in_ext = '.txt'
-    out_ext = '.pruned'
-    logfilename = './pfb_dnsbl_prune.log'
+    parser = argparse.ArgumentParser(description="Directory containing input "
+            "files, input extensions, output extensions and optional options")
 
-    num_args = len(sys.argv)
+    parser.add_argument("directory", type=str,
+            help="Directory holding '.txt' files to prune and write to '.pruned' files")
 
-    if num_args < 2:
-        log("Specify a directory containing csv files with .fat extension to be pruned.")
-        sys.exit(1)
+    parser.add_argument("--method", type=str, nargs='?', default='pointer',
+            help="Method of pruning: 'standard' or 'pointer'")
 
-    directory = Path(sys.argv[1])
+    parser.add_argument("in_ext", type=str, nargs='?', default='.txt',
+            help="Input extension; default is '.txt'")
+
+    parser.add_argument("out_ext", type=str, nargs='?', default='.pruned',
+            help="Output extension; default is '.pruned'")
+
+    parser.add_argument("--prune-regex", action="store_true",
+            help="Prune domains matching regexes found in the input files")
+
+    parser.add_argument("--log", type=str, nargs='?',
+            const='./pfb_dnsbl_prune.log', default=None,
+            help="Enable log; default is './pfb_dnsbl_prune.log'")
+
+    args = parser.parse_args()
+
+    print('in ext:', args.in_ext)
+    print('prune regex:', args.prune_regex)
+    print('method:', args.method)
+    print('log:', args.log)
+    print('directory:', args.directory)
+
+    directory = Path(args.directory)
 
     if not directory.is_dir():
-        log("Specify an existing directory.")
-        sys.exit(1)
+        parser.error("Specify an existing directory")
 
-    if num_args > 2:
-        in_ext = sys.argv[2]
-        if len(in_ext) < 2:
-            log("Input extension must be at least two characters, e.g., '.F'")
+    if len(args.in_ext) < 2 or args.in_ext[0] != '.':
+        parser.error("Input extension must start with a period and have at least one character")
+    if len(args.out_ext) < 2 or args.out_ext[0] != '.':
+        parser.error("Output extension must start with a period and have at least one character")
+    if args.in_ext == args.out_ext:
+        parser.error("Input extension must differ from Output extension")
 
-    if num_args > 3:
-        out_ext = sys.argv[3]
+    if args.method not in dataHandlers:
+        parser.error("Method must be 'pointer' or 'standard'")
 
-    if num_args > 4 and (sys.argv[4] == 'standard' or sys.argv[4] == 'pointer'):
-        (DomainType, write_csv) = dataHandlers[sys.argv[4]]
-
-    log("Trim '*%s' files in '%s' and write as '*%s'." \
-            % (in_ext, directory, out_ext))
-
-    if num_args > 5 and len(sys.argv[5]) > 0:
-        logfilename = sys.argv[5]
+    if args.log is not None:
+        logfilename = args.log
         log = log2file
 
-    log("Begin processing directory:", directory)
+    (DomainType, write_csv) = dataHandlers[args.method]
+
+    prune_regex_matches = _prune_regex_matches if args.prune_regex else _skip_regex_matches
+    log("Trim '*%s' files in '%s' and write as '*%s'." \
+            % (args.in_ext, args.directory, args.out_ext))
+
+    log("Begin processing directory:", args.directory)
     start = timer()
-    process_directory(directory, in_ext, out_ext)
+    process_directory(directory, args.in_ext, args.out_ext)
     end = timer()
     log("Processing completed in:", end - start)
