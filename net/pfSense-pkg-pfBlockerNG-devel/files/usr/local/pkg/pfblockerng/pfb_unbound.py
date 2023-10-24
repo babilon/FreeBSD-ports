@@ -1862,6 +1862,7 @@ def operate(id, event, qstate, qdata):
 
             else:
                 debug('[{}]: domain found in exclusion cache: {}', q_name_original, q_name)
+                break
 
     debug('[{}]: passed through', q_name_original)
 

@@ -508,6 +508,8 @@ dnsbl_assemble_whitelistfile() {
 	fi
 
 	# Process all Whitelist files
+	# Downloaded whitelists are never exact-matches, so we do not care about their type
+	# Convert all of them to regular expressions for GNU grep
 	if [ "$(ls -A ${pfbdomain}*.whitelist 2>/dev/null)" ]; then
 		find "${pfbdomain}"*.whitelist | xargs cat  | sort | uniq | cut -d',' -f1 | \
 			sed 's/\./\\./g' | sed "s/*/${star}/g" | sed "s/^/${prefix}/" | sed "s/$/${suffix}/" > "${dnsbl_whitelist}"
