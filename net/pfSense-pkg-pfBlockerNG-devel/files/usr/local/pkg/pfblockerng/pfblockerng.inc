@@ -3679,6 +3679,7 @@ function pfblockerng_top1m() {
 			}
 
 			// Collect Domain TLD
+			$line		= strtolower($line);
 			$csvline	= str_getcsv($line);
 			$tld		= substr($csvline[1], strrpos($csvline[1], '.') + 1);
 
@@ -7814,7 +7815,8 @@ function sync_package_pfblockerng($cron='') {
 
 								$line = str_replace('"', '', strstr($host, '"', False));
 								$host_ip = trim(str_replace('A ', '', strstr($line, 'A ', FALSE)));
-								$domain = strstr($line, ' ', TRUE);
+								$domain = strtolower(strstr($line, ' ', TRUE));
+
 								if (substr($domain, 0, 4) == 'www.') {
 									$domain = substr($domain, 4);
 								}
@@ -7940,6 +7942,7 @@ function sync_package_pfblockerng($cron='') {
 			// Python mode create a CSV list of SafeSearch hosts
 			if ($pfb['dnsbl_py_blacklist'] && !empty($safesearch_hosts)) {
 				foreach ($safesearch_hosts as $host => $data) {
+					$host = strtolower($host);
 					if (isset($data['nxdomain'])) {
 						$line = "{$host},nxdomain,nxdomain\n";
 					} else {
@@ -8001,6 +8004,8 @@ function sync_package_pfblockerng($cron='') {
 							$line = ltrim($line, '.');
 							$wildcard = TRUE;
 						}
+
+						$line = strtolower($line);
 
 						// Remove 'www.' prefix
 						if (substr($line, 0, 4) == 'www.') {

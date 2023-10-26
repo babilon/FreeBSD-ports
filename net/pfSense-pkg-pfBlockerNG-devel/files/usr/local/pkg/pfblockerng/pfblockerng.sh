@@ -413,7 +413,7 @@ dnsbl_scrub() {
 
 	# Remove Whitelisted Domains and Sub-Domains, if configured
 	if [ -s "${pfbdnsblsuppression}" ] && [ -s "${pfbdomain}${alias}.bk" ]; then
-		/usr/local/bin/ggrep -vFi -f "${pfbdnsblsuppression}" "${pfbdomain}${alias}.bk" > "${pfbdomain}${alias}.bk2"
+		/usr/local/bin/ggrep -vF -f "${pfbdnsblsuppression}" "${pfbdomain}${alias}.bk" > "${pfbdomain}${alias}.bk2"
 		countx="$(grep -c ^ ${pfbdomain}${alias}.bk2)"
 		countwu="$((countf - countx))"
 
@@ -456,7 +456,7 @@ dnsbl_assemble_whitelistfile() {
 	else
 		prefix='[,.]'
 		star='[^,[:space:]]*'
-		suffix=','
+		suffix=',,'
 	fi
 
 	# Process all Whitelist files
@@ -480,7 +480,7 @@ dnsbl_remove_whitelisted() {
 		query_size="$(grep -c ^ ${dnsbl_whitelist})"
 		if [ "${query_size}" -gt 0 ]; then
 			countf="$(grep -c ^ ${pfbdomain}${alias}.txt)"
-			/usr/local/bin/ggrep -vi -f "${dnsbl_whitelist}" "${pfbdomain}${alias}.txt" > "${pfbdomain}${alias}.bk"
+			/usr/local/bin/ggrep -v -f "${dnsbl_whitelist}" "${pfbdomain}${alias}.txt" > "${pfbdomain}${alias}.bk"
 			countx="$(grep -c ^ ${pfbdomain}${alias}.bk)"
 			countwl="$((countf - countx))"
 
