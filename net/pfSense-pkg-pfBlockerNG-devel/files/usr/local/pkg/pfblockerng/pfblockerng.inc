@@ -2939,7 +2939,6 @@ function tld_analysis() {
 			if ($pfb['dnsbl_py_blacklist']) {
 				$tld_cnt++;
 				$pfb_found = TRUE;
-				$tld_segments = @max((array((substr_count($tld, '.') +1), $tld_segments) ?: 1));
 
 				pfb_logger("{$tld}|", 1);
 				@fwrite($p_zone, ",{$tld},,1,DNSBL_TLD,DNSBL_TLD\n");
@@ -3108,6 +3107,8 @@ function tld_analysis() {
 				$tld    = end($dparts);
 				$d_info = $eparts[2]; // Logging Type/Header/Alias group details
 				$dfound	= '';
+				$tparts = explode(',', $d_info);
+				$t_type = count($tparts) > 4 ? intval(end($tparts)) : 0;
 			}
 
 			// DNSBL Unbound blocking mode
@@ -3178,10 +3179,12 @@ function tld_analysis() {
 
 				// DNSBL python blocking mode
 				if ($pfb['dnsbl_py_blacklist']) {
-					@fwrite($p_zone, ",{$dfound},{$d_info}");
+					if ($t_type === 0) {
+						@fwrite($p_zone, ",{$dfound},{$d_info}");
 
-					// TLD remove files - See below for description
-					@fwrite($p_tsp, ".{$dfound},,\n");
+						// TLD remove files - See below for description
+						@fwrite($p_tsp, ".{$dfound},,\n");
+					}
 				}
 				else {
 					$ipv6_dnsbl = '';
