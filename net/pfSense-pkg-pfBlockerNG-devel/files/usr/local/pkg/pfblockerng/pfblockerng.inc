@@ -83,7 +83,6 @@ $pfb['errlog']		= "{$pfb['logdir']}/error.log";
 $pfb['pyerrlog']	= "{$pfb['logdir']}/py_error.log";
 $pfb['extraslog']	= "{$pfb['logdir']}/extras.log";
 $pfb['dnsbl_parse_err']	= "{$pfb['logdir']}/dnsbl_parsed_error.log";
-$pfb['whitelistlog']	= "{$pfb['logdir']}/whitelist.log";
 
 $pfb['master']		= "{$pfb['dbdir']}/masterfile";
 $pfb['supptxt']		= "{$pfb['dbdir']}/pfbsuppression.txt";
@@ -1140,7 +1139,7 @@ function pfb_log_mgmt() {
 	$chroot_folder = '/var/unbound';
 
 	foreach (array(	'log', 'errlog', 'extraslog', 'ip_blocklog', 'ip_permitlog', 'ip_matchlog',
-			'dnslog', 'dnsbl_parse_err', 'dnsreplylog', 'unilog', 'whitelistlog') as $logtype) {
+			'dnslog', 'dnsbl_parse_err', 'dnsreplylog', 'unilog') as $logtype) {
 
 		// Max lines in Log file
 		$logmax = pfb_filter($pfb['config']['log_max_' . $logtype], PFB_FILTER_NUM, 'pfb_log_mgmt', 20000);
@@ -1229,14 +1228,6 @@ function pfb_logger($log, $logtype) {
 		// Print to Error log
 		case 6:
 			@file_put_contents("{$pfb['errlog']}", "{$elog}", FILE_APPEND);
-			break;
-
-		// Print to pfBlockerNG log and Whitelist log
-		case 7:
-			@file_put_contents("{$pfb['log']}", "{$log}", FILE_APPEND);
-			@file_put_contents("{$pfb['whitelistlog']}", "{$log}", FILE_APPEND);
-			break;
-		default:
 			break;
 	}
 }
@@ -3184,6 +3175,8 @@ function tld_analysis() {
 
 						// TLD remove files - See below for description
 						@fwrite($p_tsp, ".{$dfound},,\n");
+					} else {
+						@fwrite($p_data, ",{$dfound},{$d_info}");
 					}
 				}
 				else {
@@ -8534,6 +8527,7 @@ function sync_package_pfblockerng($cron='') {
 														// 2 = regular expression flag
 														$domain_data = ",{$line},,{$logging_type},{$header},{$alias},2\n";
 
+														$postprocess = TRUE;
 														@fwrite($dhandle, $domain_data);
 														continue;
 													}
@@ -8837,6 +8831,7 @@ function sync_package_pfblockerng($cron='') {
 												// 0 = literal flag
 												// 1 = wildcard
 												$wildcard = $adblock ? '1' : '0';
+												$postprocess |= $adblock;
 												$domain_data = ",{$line},,{$logging_type},{$header},{$alias},{$wildcard}\n";
 											}
 											else {
@@ -9016,8 +9011,9 @@ function sync_package_pfblockerng($cron='') {
 
 		if ($postprocess) {
 			$log = "\n===[  DNSBL Postprocess  ]============================================\n";
-			pfb_logger("{$log}", 7);
+			pfb_logger("{$log}", 1);
 
+			// DNSBL python requires a different deduplication process
 			$dup_mode = '';
 			if ($pfb['dnsbl_py_blacklist']) {
 				$dup_mode = 'python';
@@ -9025,22 +9021,36 @@ function sync_package_pfblockerng($cron='') {
 
 			exec("{$pfb['script']} dnsbl_assemble_whitelistfile unused unused {$dup_mode} {$elog}");
 
+			if ($pfb['dnsbl_py_blacklist']) {
+				exec("{$pfb['script']} dnsbl_py_assemble_redundants_file unused unused unused {$elog}");
+			}
+
 			// Process Whitelists
 			foreach ($postprocess_dnsbl as $header_esc) {
 
 				$log = "\n[ ${header_esc} ]${logtab} Processing downloaded whitelist entries\n";
-				pfb_logger("{$log}", 7);
+				pfb_logger("{$log}", 1);
 
 				// Ignore TOP1M whitelist at this stage
 				$pfb_alexa = 'Disabled';
 
-				// DNSBL python requires a different deduplication process
-
 				// Call script to process DNSBL Whitelisting
-				exec("{$pfb['script']} dnsbl_remove_whitelisted {$header_esc} {$pfb_alexa} {$dup_mode} {$elog}");
+				exec("{$pfb['script']} dnsbl_remove_whitelisted {$header_esc} {$pfb_alexa} unused {$elog}");
+
+				if ($pfb['dnsbl_py_blacklist']) {
+
+					$log = "\n[ ${header_esc} ]${logtab} Removing redundant DNSBL entries\n";
+					pfb_logger("{$log}", 1);
+
+					exec("{$pfb['script']} dnsbl_py_remove_redundant {$header_esc} unused unused {$elog}");
+				}
 			}
 
 			exec("{$pfb['script']} dnsbl_cleanup_whitelistfile unused unused unused {$elog}");
+
+			if ($pfb['dnsbl_py_blacklist']) {
+				exec("{$pfb['script']} dnsbl_py_cleanup_redundants_file unused unused unused {$elog}");
+			}
 		}
 
 		$alias_cnt = 0;

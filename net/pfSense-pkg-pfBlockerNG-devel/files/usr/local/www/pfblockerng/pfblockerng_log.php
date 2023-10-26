@@ -79,7 +79,6 @@ $pfb_logtypes = array(	'defaultlogs'	=> array('name'		=> 'Log Files',
 						'logdir'	=> "{$pfb['logdir']}/",
 						'logs'		=> array(
 											'pfblockerng.log', 
-											'whitelist.log', 
 											'error.log', 
 											'ip_block.log', 
 											'ip_permit.log', 
