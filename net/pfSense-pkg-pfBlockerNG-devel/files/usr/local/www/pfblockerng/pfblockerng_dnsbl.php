@@ -124,7 +124,7 @@ $pconfig['tldwhitelist']	= base64_decode($pfb['dconfig']['tldwhitelist'])	?: '';
 
 // Select field options
 
-$options_dnsbl_mode		= [ 'dnsbl_unbound' => 'Unbound mode', 'dnsbl_python' => 'Unbound python mode' ];
+$options_dnsbl_mode		= [ 'dnsbl_python' => 'Unbound python mode', 'dnsbl_unbound' => 'Unbound mode (deprecated)' ];
 $options_pfb_dnsvip_type	= [ 'ipalias' => 'IP Alias', 'carp' => 'CARP' ];
 $options_pfb_dnsvip_vhid	= array_combine(range(1, 255, 1), range(1, 255, 1));
 $options_pfb_dnsvip_base	= array_combine(range(1, 254, 1), range(1, 254, 1));
@@ -827,13 +827,15 @@ $section->addInput(new Form_Select(
 	$options_dnsbl_mode
 ))->setHelp('Select the DNSBL mode.&emsp;'
 		. '<div class="infoblock">'
-		. '<strong>Unbound Mode</strong>:<br />'
-		. '&emsp;&emsp;&emsp;&emsp;This mode will utilize Unbound local-zone/local-data entries for DNSBL (requires more memory).<br />'
 		. '<strong>Unbound Python Mode</strong>:<br />'
 		. '&emsp;&emsp;&emsp;&emsp;This mode is only available for pfSense version 2.4.5 and above.<br />'
 		. '&emsp;&emsp;&emsp;&emsp;This mode will utilize the python integration of Unbound for DNSBL.<br />'
 		. '&emsp;&emsp;&emsp;&emsp;This mode will allow logging of DNS Replies, and more advanced DNSBL Blocking features.<br />'
-		. '&emsp;&emsp;&emsp;&emsp;This mode requires substantially less memory </div>'
+		. '&emsp;&emsp;&emsp;&emsp;This mode requires substantially less memory.<br />'
+		. '<strong>Unbound Mode (<em>Deprecated</em>)</strong>:<br />'
+		. '&emsp;&emsp;&emsp;&emsp;This mode will utilize Unbound local-zone/local-data entries for DNSBL (requires more memory).<br />'
+		. '&emsp;&emsp;&emsp;&emsp;<em>This mode is deprecated and subject to removal in a future release.</em><br />'
+		. '</div>'
 );
 
 $section->addInput(new Form_Checkbox(

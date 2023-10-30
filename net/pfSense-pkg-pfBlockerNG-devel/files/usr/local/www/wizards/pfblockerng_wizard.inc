@@ -155,6 +155,10 @@ function step4_submitphpaction() {
 	}
 	$new_config['pfblockerngdnsblsettings']['config'][0]['pfb_dnsbl']		= 'on';
 
+	// Make Python mode the default
+	$new_config['pfblockerngdnsblsettings']['config'][0]['dnsbl_mode']	= 'dnsbl_python';
+	$new_config['pfblockerngdnsblsettings']['config'][0]['pfb_python']	= 'on';
+
 	// Default DNSBL Whitelist
 	if ($config['pfblockerng_wizard']['step3']['suppression'] == 'on') {
 
