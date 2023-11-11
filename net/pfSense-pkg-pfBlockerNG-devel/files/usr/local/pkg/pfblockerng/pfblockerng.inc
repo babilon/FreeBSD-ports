@@ -9054,7 +9054,9 @@ function sync_package_pfblockerng($cron='') {
 					$log = "\n[ ${header_esc} ]${logtab} Removing redundant DNSBL entries\n";
 					pfb_logger("{$log}", 1);
 
-					exec("{$pfb['script']} dnsbl_py_remove_redundant {$header_esc} unused unused {$elog}");
+                                        # believed to be unnecessary with C lang
+                                        # impl'ed prune solution.
+					#exec("{$pfb['script']} dnsbl_py_remove_redundant {$header_esc} unused unused {$elog}");
 				}
 			}
 
