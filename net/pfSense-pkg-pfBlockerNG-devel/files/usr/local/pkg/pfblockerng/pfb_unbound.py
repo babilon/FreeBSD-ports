@@ -1796,12 +1796,12 @@ def operate(id, event, qstate, qdata):
                     excludeDB[q_name] = (whitelist_result, whitelist_match)
         
         if block_result and not cached_block:
+
+            p_type = 'Python'
             
             # Determine if domain is in HSTS database (Null blocking)
             if hstsDB:
                 debug('[{}]: checking HSTS for: {}', q_name_original, block_name)
-
-                p_type = 'Python'
 
                 # Determine if TLD is in HSTS database
                 if tld in pfb['hsts_tlds']:
