@@ -749,6 +749,7 @@ function pfb_global() {
 	$pfb['dnsbl_global_log']= $pfb['dnsblconfig']['global_log'] ?: '';		// Global Logging/Blocking mode
 
 	$pfb['dnsbl_mode']	= $pfb['dnsblconfig']['dnsbl_mode'];			// DNSBL Mode (Unbound/python mode)
+	$pfb['dnsbl_py_debug']	= $pfb['dnsblconfig']['pfb_py_debug'];			// DNSBL Resolver python DNS Reply logging
 	$pfb['dnsbl_py_reply']	= $pfb['dnsblconfig']['pfb_py_reply'];			// DNSBL Resolver python DNS Reply logging
 	$pfb['dnsbl_py_block']	= $pfb['dnsblconfig']['pfb_py_block'];			// DNSBL Resolver python blocking mode
 	$pfb['dnsbl_hsts']	= $pfb['dnsblconfig']['pfb_hsts'];			// DNSBL Resolver python block HSTS via Null Block mode
@@ -1225,8 +1226,6 @@ function pfb_logger($log, $logtype) {
 		// Print to Error log
 		case 6:
 			@file_put_contents("{$pfb['errlog']}", "{$elog}", FILE_APPEND);
-			break;
-		default:
 			break;
 	}
 }
@@ -2195,7 +2194,7 @@ function pfb_unbound_dnsbl($mode) {
 					$log = "\nAdding DNSBL Unbound mode (Resolver adv. setting)";
 				}
 
-				// To be removed when SafeSearch CNAME python mode has been fixed
+				// TODO: to be removed when SafeSearch CNAME python mode has been fixed
 				elseif ($pfb['safesearch_enable'] !== 'Disable') {
 					$pfbupdate = TRUE;
 					$unbound_custom .= "\n{$unbound_include}";
@@ -2216,7 +2215,7 @@ function pfb_unbound_dnsbl($mode) {
 							unset($custom[$key]);
 						}
 
-						// To be removed when SafeSearch CNAME python mode has been fixed
+						// TODO: to be removed when SafeSearch CNAME python mode has been fixed
 						elseif ($pfb['safesearch_enable'] !== 'Disable') {
 							//
 						}
@@ -2240,7 +2239,7 @@ function pfb_unbound_dnsbl($mode) {
 				$log = "\nAdding DNSBL Unbound mode (Resolver adv. setting)";
 			}
 
-			// To be removed when SafeSearch CNAME python mode has been fixed
+			// TODO: to be removed when SafeSearch CNAME python mode has been fixed
 			elseif ($pfb['safesearch_enable'] !== 'Disable') {
 				$pfbupdate = TRUE;
 				$unbound_custom = "{$unbound_include}";
@@ -2293,7 +2292,7 @@ function pfb_unbound_dnsbl($mode) {
 						$unbound = TRUE;
 					}
 
-					// To be removed when SafeSearch CNAME python mode has been fixed
+					// TODO: to be removed when SafeSearch CNAME python mode has been fixed
 					elseif ($pfb['safesearch_enable'] !== 'Disable') {
 						$unbound = TRUE;
 					}
@@ -2358,7 +2357,7 @@ function pfb_unbound_dnsbl($mode) {
 				$conf[] = "\nserver:include: {$pfb['dnsbl_file']}.*conf\n";
 			}
 
-			// To be removed when SafeSearch CNAME python mode has been fixed
+			// TODO: to be removed when SafeSearch CNAME python mode has been fixed
 			elseif ($pfb['safesearch_enable'] !== 'Disable') {
 				$u_update = TRUE;
 				$u_msg .= "  Added DNSBL SafeSearch CNAME mode\n";
@@ -2411,28 +2410,44 @@ function pfb_unbound_python_whitelist($mode='') {
 	global $pfb;
 	pfb_global();
 
-	$dnsbl_whitelist = '';
+	$dnsbl_whitelist = array();
 	$dnsbl_white = pfbng_text_area_decode($pfb['dnsblconfig']['suppression'], TRUE, FALSE, TRUE);
 	if (!empty($dnsbl_white)) {
 		foreach ($dnsbl_white as $key => $line) {
+			$line = trim($line);
 			if (!empty($line)) {
 				if (substr($line, 0, 4) == 'www.') {
 					$line = substr($line, 4);
 				}
 
-				// Minimize the python whitelist queries to the smallest tld segment count
-				if (!isset($tld_segments)) {
-					$tld_segments = (substr_count($line, '.') +1);
-				}
-				$tld_segments = @min((array((substr_count($line, '.') +1), $tld_segments) ?: 1));
-
+				// 0 = literal
+				// 1 = wildcard
 				if (substr($line, 0, 1) == '.') {
 					$line = ltrim($line, '.');
-					$dnsbl_whitelist .= "{$line},1\n";
+					$dnsbl_whitelist[] = ",{$line},,1,DNSBL_WHITELIST,USER,1\n";
 				} else {
-					$dnsbl_whitelist .= "{$line},0\n";
+					$dnsbl_whitelist[] = ",{$line},,1,DNSBL_WHITELIST,USER,0\n";
 				}
 			}
+		}
+	}
+
+	// TODO: move exclusions to their own file
+	$exclusions_files = glob("{$pfb['dnsdir']}/*.exclusions");
+	foreach($exclusions_files as $file) {
+		if (($handle = @fopen($file, 'r')) !== FALSE) {
+			while (($line = @fgets($handle)) !== FALSE) {
+				$line = trim($line);
+				if (!empty($line)) {
+					$alias = substr(basename($file), 0, -11);
+					$csvline = str_getcsv($line);
+					$type = $csvline[1]; // 0 = literal, 1 = wildcard, 2 = regex
+					$dnsbl_whitelist[] = ",{$csvline[0]},,1,DNSBL_EXCLUSION,{$alias},{$type}\n";
+				}
+			}
+		}
+		if ($handle) {
+			@fclose($handle);
 		}
 	}
 
@@ -2490,7 +2505,7 @@ function pfb_unbound_python($mode) {
 			$dnsbl_whitelist = pfb_unbound_python_whitelist();
 
 			// Compare previous DNSBL Whitelist to new Whitelist
-			$pfb_py_whitelist_ex = @file_get_contents($pfb['unbound_py_wh']);
+			$pfb_py_whitelist_ex = @file($pfb['unbound_py_wh'], FILE_SKIP_EMPTY_LINES);
 			if ($dnsbl_whitelist !== $pfb_py_whitelist_ex) {
 				$pfbpython = TRUE;
 				@file_put_contents($pfb['unbound_py_wh'], $dnsbl_whitelist, LOCK_EX);
@@ -2503,8 +2518,10 @@ function pfb_unbound_python($mode) {
 			$pfbpython = TRUE;
 		}
 
-		if (!isset($tld_segments)) {
-			$tld_segments = '1';
+
+		$python_debug = 'off';
+		if ($pfb['dnsbl_py_debug'] == 'on') {
+			$python_debug = 'on';
 		}
 
 		$python_ipv6 = 'off';
@@ -2582,12 +2599,12 @@ function pfb_unbound_python($mode) {
 [MAIN]
 dnsbl_ipv4	= {$pfb['dnsbl_vip']}
 python_enable	= {$python_enable}
+python_debug	= {$python_debug}
 python_ipv6	= {$python_ipv6}
 python_reply	= {$python_reply}
 python_blocking	= {$python_blocking}
 python_hsts	= {$python_hsts}
 python_idn	= {$python_idn}
-python_tld_seg	= {$tld_segments}
 python_tld	= {$python_tld}
 python_tlds	= {$python_tlds}
 python_nolog	= {$python_nolog}
@@ -2909,7 +2926,6 @@ function tld_analysis() {
 			if ($pfb['dnsbl_py_blacklist']) {
 				$tld_cnt++;
 				$pfb_found = TRUE;
-				$tld_segments = @max((array((substr_count($tld, '.') +1), $tld_segments) ?: 1));
 
 				pfb_logger("{$tld}|", 1);
 				@fwrite($p_zone, ",{$tld},,1,DNSBL_TLD,DNSBL_TLD\n");
@@ -3076,8 +3092,10 @@ function tld_analysis() {
 				$dparts = explode('.', $domain);
 				$dcnt   = count($dparts);
 				$tld    = end($dparts);
-				$d_info = $eparts[2]; // Logging Type/Header/Alias group details
+				$d_info = $eparts[2]; // ",logging_type,header,alias_group_details(,entry_type)?" (0 = literal, 1 = wildcard, 2 = regex)
 				$dfound	= '';
+				$tparts = explode(',', $d_info);
+				$t_type = count($tparts) > 4 ? intval(end($tparts)) : 0;
 			}
 
 			// DNSBL Unbound blocking mode
@@ -3148,10 +3166,17 @@ function tld_analysis() {
 
 				// DNSBL python blocking mode
 				if ($pfb['dnsbl_py_blacklist']) {
-					@fwrite($p_zone, ",{$dfound},{$d_info}");
+					if ($t_type === 0) {
+						// Only type 0 (literal) may be treated as a "zone"
+						@fwrite($p_zone, ",{$dfound},{$d_info}");
 
-					// TLD remove files - See below for description
-					@fwrite($p_tsp, ".{$dfound},,\n");
+						// TLD remove files - See below for description
+						@fwrite($p_tsp, ".{$dfound},,\n");
+					} else {
+						// Type 1 (wildcard) is already a "zone"
+						// Type 2 (regex) is a special case
+						@fwrite($p_data, ",{$dfound},{$d_info}");
+					}
 				}
 				else {
 					$ipv6_dnsbl = '';
@@ -3420,6 +3445,7 @@ function pfb_unbound_clear_work_files() {
 			"{$pfb['dnsbldir']}/unbound.bk",
 			"{$pfb['dnsbldir']}/unbound.tmp",
 			"{$pfb['dnsbl_file']}.bk",
+			"{$pfb['dnsbl_file']}.ex",
 			"{$pfb['dnsbl_file']}.tsp",
 			"{$pfb['dnsbl_file']}.sync",
 			"/tmp/dnsbl_remove*",
@@ -3438,9 +3464,9 @@ function pfb_update_unbound($mode, $pfbupdate, $pfbpython) {
 	global $g, $pfb;
 
 	if ($mode == 'enabled') {
-		$ext = '.bk';
+		$ext = array( '.bk', '.ex' );
 	} else {
-		$ext = '.*';	// Remove all DNSBL Unbound files
+		$ext = array( '.*' );	// Remove all DNSBL Unbound files
 	}
 
 	// Execute TLD analysis, if configured
@@ -3474,7 +3500,9 @@ function pfb_update_unbound($mode, $pfbupdate, $pfbpython) {
 
 	// When pfBlockerNG is disabled and 'keep blocklists' is disabled.
 	if ($pfb['enable'] == '' && $pfb['keep'] == '' && !$pfb['install']) {
-		unlink_if_exists("{$pfb['dnsbl_file']}{$ext}");
+		foreach ($ext as $e) {
+			unlink_if_exists("{$pfb['dnsbl_file']}{$e}");
+		}
 	}
 
 	// Disable DNSBL
@@ -3577,6 +3605,7 @@ function pfb_update_unbound($mode, $pfbupdate, $pfbpython) {
 
 	// Python blocking mode enabled
 	else {
+		// TODO: improve this logic once exclusions are moved to their own file
 		$tld_cnt = @file_get_contents($pfb['unbound_py_count']);
 		$dnsbl_cnt = $dnsbl_cnt - $tld_cnt;
 		$final_cnt = exec("/usr/bin/find {$pfb['unbound_py_data']} {$pfb['unbound_py_zone']} -type f 2>/dev/null | xargs cat | {$pfb['grep']} -c ^ 2>&1");
@@ -3650,6 +3679,7 @@ function pfblockerng_top1m() {
 			}
 
 			// Collect Domain TLD
+			$line		= strtolower($line);
 			$csvline	= str_getcsv($line);
 			$tld		= substr($csvline[1], strrpos($csvline[1], '.') + 1);
 
@@ -5329,7 +5359,7 @@ function pfb_collect_localhosts() {
 
 	// Collect static DHCP hostnames/IPs
 	foreach (config_get_path('dhcpd', []) as $dhcp) {
-		if (is_array($dhcp['staticmap'])) {
+		if (isset($dhcp['staticmap']) && is_array($dhcp['staticmap'])) {
 			foreach ($dhcp['staticmap'] as $smap) {
 				$local_hosts[$smap['ipaddr']] = strtolower("{$smap['hostname']}");
 			}
@@ -5338,7 +5368,7 @@ function pfb_collect_localhosts() {
 
 	// Collect static DHCPv6 hostnames/IPs
 	foreach (config_get_path('dhcpdv6', []) as $dhcpv6) {
-		if (is_array($dhcpv6['staticmap'])) {
+		if (isset($dhcpv6['staticmap']) && is_array($dhcpv6['staticmap'])) {
 			foreach ($dhcpv6['staticmap'] as $smap) {
 				$local_hosts[$smap['ipaddrv6']] = strtolower("{$smap['hostname']}");
 			}
@@ -6987,6 +7017,30 @@ function pfb_clear_contents() {
 }
 
 
+function convert_idn($line) {
+	global $pfb;
+
+	// Convert IDN (Unicode domains) to ASCII (punycode)
+	if (!ctype_print($line)) {
+
+		// Convert encodings to UTF-8
+		$line = mb_convert_encoding($line, 'UTF-8',
+			mb_detect_encoding($line, 'UTF-8, ASCII, ISO-8859-1'));
+	
+		$log = "\n  IDN converted: [ {$line} ]\t";
+		$line = idn_to_ascii($line);
+		if (!empty($line)) {
+			pfb_logger("{$log} [ {$line} ]", 1);
+			return $line;
+		} else {
+			return '';
+		}
+	}
+
+	return $line;
+}
+
+
 // Main pfBlockerNG function
 function sync_package_pfblockerng($cron='') {
 	global $g, $pfb, $pfbarr;
@@ -7640,6 +7694,11 @@ function sync_package_pfblockerng($cron='') {
 	}
 
 	if ($pfb['enable'] == 'on' && $pfb['dnsbl'] == 'on' && !$pfb['save'] && !$dnsbl_error) {
+
+		$postprocess = FALSE; // Marker to determine whether postprocessing is needed (i.e. any files add anything to the whitelist)
+		$postprocess_dnsbl = array(); // Files that need postprocessing due to whitelisting
+		$alias_postprocessing_data = array(); // Data used for processing DNSBL after the loop over the lists
+
 		if ((config_get_path('installedpackages/pfblockerngdnsbl/config') != null) ||
 		    (config_get_path('installedpackages/pfblockerngblacklist/blacklist_enable') == 'Enable')) {
 
@@ -7797,7 +7856,8 @@ function sync_package_pfblockerng($cron='') {
 
 								$line = str_replace('"', '', strstr($host, '"', False));
 								$host_ip = trim(str_replace('A ', '', strstr($line, 'A ', FALSE)));
-								$domain = strstr($line, ' ', TRUE);
+								$domain = strtolower(strstr($line, ' ', TRUE));
+
 								if (substr($domain, 0, 4) == 'www.') {
 									$domain = substr($domain, 4);
 								}
@@ -7923,6 +7983,7 @@ function sync_package_pfblockerng($cron='') {
 			// Python mode create a CSV list of SafeSearch hosts
 			if ($pfb['dnsbl_py_blacklist'] && !empty($safesearch_hosts)) {
 				foreach ($safesearch_hosts as $host => $data) {
+					$host = strtolower($host);
 					if (isset($data['nxdomain'])) {
 						$line = "{$host},nxdomain,nxdomain\n";
 					} else {
@@ -7984,6 +8045,8 @@ function sync_package_pfblockerng($cron='') {
 							$line = ltrim($line, '.');
 							$wildcard = TRUE;
 						}
+
+						$line = strtolower($line);
 
 						// Remove 'www.' prefix
 						if (substr($line, 0, 4) == 'www.') {
@@ -8362,38 +8425,104 @@ function sync_package_pfblockerng($cron='') {
 									$liteparser = TRUE;
 								}
 
-								// Variables for Easylists
-								$easylist = $validate_header = FALSE;
+								// Variables for Easylist-style lists
 								$e_replace = array( '||', '.^', '^' );
+
+								// Variables for parsing Easylist-style lists
+								$easylist = FALSE;
 
 								$run_once = $csv_parser = FALSE;
 								$csv_type = '';
 								$ipcount = $ip_cnt = 0;
 
+								// First check if this is an EasyList
+								if (($fhandle = @fopen("{$file_dwn}.orig", 'r')) !== FALSE) {
+
+									// Variables for checking whether it's an Easylist-style list
+									$validated_header = FALSE;
+
+									while (($line = @fgets($fhandle)) !== FALSE) {
+
+										$line = trim($line);
+
+										// Validate EasyList/AdBlock/uBlock/ADGuard Feeds
+										if (!$validated_header) {
+											if (strpos($line, '[Adblock Plus ') !== FALSE ||
+												strpos($line, '[Adblock Plus]') !== FALSE ||
+												strpos($line, '[uBlock Origin') !== FALSE ||
+												strpos($line, '! Title: AdGuard') !== FALSE) {
+												$easylist = $validated_header = TRUE;
+												break;
+											}
+											// Skip exclamation comment lines and other headers
+											// Needs to be done separately because of AdGuard
+											elseif (substr($line, 0, 1) === '!' ||
+													substr($line, 0, 1) === '[') {
+												continue;
+											}
+											// Some real content found, so stop checking for the header
+											else {
+												$validated_header = TRUE;
+											}
+										}
+
+										// Skip exclamation comment lines and headers
+										if (substr($line, 0, 1) === '!' ||
+											substr($line, 0, 1) === '[') {
+											continue;
+										}
+
+										// Checks for EasyLists without headers
+										if (substr($line, 0, 2) === '||' ||
+											substr($line, 0, 4) === '@@||') {
+											$easylist = TRUE;
+											break;
+										}
+
+										// Probably EasyList-style domain
+										if (substr($line, 0, 1) === '|' || 
+											substr($line, 0, 1) === '@') {
+
+											// EasyLists are the only syntax that accepts ^
+											if (strpos($line, '^') !== FALSE) {
+												$easylist = TRUE;
+												break;
+											}
+
+											// EasyList exclusion
+											if (substr($line, 0, 2) === '@@') {
+												$easylist = TRUE;
+												break;
+											}
+
+											// Remove all pipes
+											$line = trim($line, '|');
+											$line = trim(str_replace($e_replace, '',  $line));
+
+											// Skip empty lines
+											if (empty($line)) {
+												continue;
+											}
+
+											// This is very likely an EasyList
+											$easylist = TRUE;
+											break;
+										}
+									}
+								}
+								if ($fhandle) {
+									@fclose($fhandle);
+								}
+
 								// Parse downloaded file for Domain names
 								if (($fhandle = @fopen("{$file_dwn}.orig", 'r')) !== FALSE) {
-									if (($dhandle = @fopen("{$pfbfolder}/{$header}.bk", 'w')) !== FALSE) {
+									if (($dhandle = @fopen("{$pfbfolder}/{$header}.bk", 'w')) !== FALSE &&
+										($ehandle = @fopen("{$pfbfolder}/{$header}.ex", 'w')) !== FALSE) {
+										
 										while (($line = @fgets($fhandle)) !== FALSE) {
 
 											// Collect original line
 											$oline = $line;
-
-											// Validate EasyList/AdBlock/uBlock/ADGuard Feeds
-											if (!$validate_header) {
-												if (strpos($line, '[Adblock Plus ') !== FALSE ||
-												    strpos($line, '[Adblock Plus]') !== FALSE ||
-												    strpos($line, '[uBlock Origin') !== FALSE ||
-												    strpos($line, '! Title: AdGuard') !== FALSE) {
-													$easylist = $validate_header = TRUE;
-													continue;
-												}
-												elseif (substr($line, 0, 1) === '!') {
-													continue;
-												}
-												else {
-													$validate_header = TRUE;
-												}
-											}
 
 											// Remove any '^M' characters
 											if (strpos($line, "\r") !== FALSE) {
@@ -8402,18 +8531,138 @@ function sync_package_pfblockerng($cron='') {
 
 											// Remove invalid charaters
 											$line = trim($line, " \t\n\r\0\x0B\xC2\xA0");
+										
+											// Trim all whitespace characters
+											$line = trim($line);
+										
+											if (empty($line)) {
+												continue;
+											}
 
+											// Skip exclamations comment lines and headers
+											if (substr($line, 0, 1) === '!' ||
+												substr($line, 0, 1) === '[') {
+												continue;
+											}
+
+											// Make it case-insensitive
+											$line = strtolower($line);
+
+											// Check for EasyList-style domain blocks and exclusions
 											if ($easylist) {
-												if (substr($line, 0, 2) !== '||' ||
-												    substr($line, -1) !== '^' ||
-												    strpos($line, '$') !== FALSE ||
-												    strpos($line, '*') !== FALSE ||
-												    strpos($line, '/') !== FALSE) {
+
+												// Invalid for either blocking or excluding -- skip it
+												if (strpos($line, '$') !== FALSE ||
+													strpos($line, '/') !== FALSE ||
+													strpos($line, '?') !== FALSE ||
+													strpos($line, '~') !== FALSE ||
+													strpos($line, '=') !== FALSE ||
+													strpos($line, '&') !== FALSE ||
+													strpos($line, ';') !== FALSE ||
+													strpos($line, '#') !== FALSE ||
+													strpos($line, ',') !== FALSE ||
+													strpos($line, ':') !== FALSE) {
 													continue;
 												}
 
-												$lite = TRUE;
-												$line = str_replace($e_replace, '', $line);
+												$startpos = 0;
+												$endpos = -1;
+												$is_easylist_exclusion = FALSE;
+												$is_regex = FALSE;
+
+												// Exclusion
+												if (substr($line, 0, 2) === '@@') {
+													// Skip for Unbound mode -- not compatible with exclusions
+													if(!$pfb['dnsbl_py_blacklist']) {
+														continue;
+													}
+
+													$startpos = 2;
+													$is_easylist_exclusion = TRUE;
+												}
+
+												// Not sure if within spec, but some domains might end with a pipe
+												if (substr($line, -1) === '|') {
+													$endpos = -2;
+												}
+
+												// Not a domain name entry -- skip it
+												if (substr($line, $startpos, 2) !== '||' ||
+													substr($line, $endpos, 1) !== '^') {
+													continue;
+												}
+
+												$line = trim(str_replace($e_replace, '',  substr($line, $startpos, $endpos)));
+
+												// Skip empty lines
+												if (empty($line)) {
+													continue;
+												}
+
+												// Regex
+												if (strpos($line, '*') !== FALSE) {
+													// Skip for Unbound mode -- not compatible with regular expressions
+													if (!$pfb['dnsbl_py_blacklist']) {
+														continue;
+													}
+
+													$is_regex = TRUE;
+												}
+
+												// Convert IDN (Unicode domains) to ASCII (punycode)
+												$line = convert_idn($line);
+												if (empty($line)) {
+													// Record failed parsed line
+													pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
+													continue;
+												}
+
+												// Special handling for whitelist entries
+												if ($is_easylist_exclusion) {
+
+													if ($is_regex) {
+														// 2 = regular expression flag
+														$exclusion_data = "{$line},2\n";
+													} 
+													else {
+														// Remove leading/trailing dots
+														$line = trim(trim($line), '.');
+
+														// Skip empty lines
+														if (empty($line)) {
+															continue;
+														}
+
+														// Domain Validation
+														if (empty(pfb_filter($line, PFB_FILTER_DOMAIN, 'DNSBL_Download'))) {
+														
+															// Log invalid Domains
+															if (!isset($dnsbl_skip[$line])) {
+																pfb_parsed_fail($header, $line, $oline, $pfb['dnsbl_parse_err']);
+															}
+															continue;
+														}
+
+														// 1 = wildcard
+														$exclusion_data = "{$line},1\n";
+													}
+													
+
+													$postprocess = TRUE;
+													@fwrite($ehandle, $exclusion_data);
+													continue;
+												}
+												
+												// Convert to regular expression for usage with Python
+												// Otherwise, let the normal processing continue
+												if ($is_regex) {
+													// 2 = regular expression flag
+													$domain_data = ",{$line},,{$logging_type},{$header},{$alias},2\n";
+
+													$postprocess = TRUE;
+													@fwrite($dhandle, $domain_data);
+													continue;
+												}
 											}
 											else {
 												// If 'tab' character found, replace with whitespace
@@ -8592,9 +8841,19 @@ function sync_package_pfblockerng($cron='') {
 													continue;
 												}
 											}
+
 											$line = trim($line);
 
-											if (!$easylist) {
+											if (empty($line)) {
+												continue;
+											}
+
+											if ($easylist) {
+
+												// Only lite parsing required for EasyLists
+												$lite = TRUE;
+											}
+											else {
 
 												// Typical Host Feed format - Remove characters before space
 												if (!$rev_format && strpos($line, ' ') !== FALSE) {
@@ -8656,8 +8915,13 @@ function sync_package_pfblockerng($cron='') {
 												if (strpos($line, ':') !== FALSE) {
 													$line = preg_replace("/:[0-9]{1,5}$/", '', $line);
 												}
+
+												$line = trim($line);
+
+												if (empty($line)) {
+													continue;
+												}
 											}
-											$line = trim($line);
 
 											// Collect any IPs found in domain feed
 											if (is_ipaddrv4($line)) {
@@ -8673,26 +8937,19 @@ function sync_package_pfblockerng($cron='') {
 											}
 
 											// Convert IDN (Unicode domains) to ASCII (punycode)
-											if (!ctype_print($line)) {
-
-												// Convert encodings to UTF-8
-												$line = mb_convert_encoding($line, 'UTF-8',
-													mb_detect_encoding($line, 'UTF-8, ASCII, ISO-8859-1'));
-
-												$log = "\n  IDN converted: [ {$line} ]\t";
-												$line = idn_to_ascii($line);
-												if (!empty($line)) {
-													pfb_logger("{$log} [ {$line} ]", 1);
-												}
-												else {
-													// Record failed parsed line
-													pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
-													continue;
-												}
+											$line = convert_idn($line);
+											if (empty($line)) {
+												// Record failed parsed line
+												pfb_parsed_fail($header, '', $oline, $pfb['dnsbl_parse_err']);
+												continue;
 											}
 
 											// Remove leading/trailing dots
 											$line = trim(trim($line), '.');
+
+											if (empty($line)) {
+												continue;
+											}
 
 											// Domain Validation
 											if (empty(pfb_filter($line, PFB_FILTER_DOMAIN, 'DNSBL_Download'))) {
@@ -8714,23 +8971,27 @@ function sync_package_pfblockerng($cron='') {
 
 											// For DNSBL python, save domain and Logging type
 											if ($pfb['dnsbl_py_blacklist']) {
-												$domain_data = ',' . strtolower($line)
-													. ",,{$logging_type},{$header},{$alias}\n";
+												// 0 = literal flag
+												// 1 = wildcard
+												$wildcard = $easylist ? '1' : '0';
+												$postprocess |= $easylist;
+												$domain_data = ",{$line},,{$logging_type},{$header},{$alias},{$wildcard}\n";
 											}
 											else {
 												$ipv6_dnsbl = "\n";
 												if ($pfb['dnsbl_v6'] == 'on' && !$pfb['dnsbl_tld']) {
-													$ipv6_dnsbl = " local-data: \"" . strtolower($line)
-															. " 60 IN AAAA {$sinkhole_type6}\"\n";
+													$ipv6_dnsbl = " local-data: \"{$line} 60 IN AAAA {$sinkhole_type6}\"\n";
 												}
-												$domain_data = "local-data: \"" . strtolower($line)
-														. " 60 IN A {$sinkhole_type4}\"{$ipv6_dnsbl}";
+												$domain_data = "local-data: \"{$line} 60 IN A {$sinkhole_type4}\"{$ipv6_dnsbl}";
 											}
 											@fwrite($dhandle, $domain_data);
 										}
 									}
 									if ($dhandle) {
 										@fclose($dhandle);
+									}
+									if ($ehandle) {
+										@fclose($ehandle);
 									}
 								}
 								if ($fhandle) {
@@ -8749,6 +9010,11 @@ function sync_package_pfblockerng($cron='') {
 								else {
 									// Remove previous IP feed
 									unlink_if_exists("{$pfbfolder}/{$header}_v4.ip");
+								}
+
+								// Add to the list for postprocessing
+								if (!empty($domain_data)) {
+									$postprocess_dnsbl[] = $header_esc;
 								}
 
 								// Validate feed with Unbound-checkconf
@@ -8771,14 +9037,12 @@ function sync_package_pfblockerng($cron='') {
 										$pfb_alexa = 'on';
 									}
 
-									// DNSBL python requires a different deduplication process
-									$dup_mode = '';
-									if ($pfb['dnsbl_py_blacklist']) {
-										$dup_mode = 'python';
-									}
-
 									// Call script to process DNSBL 'De-Duplication / Whitelisting / TOP1M Whitelisting'
-									exec("{$pfb['script']} dnsbl_scrub {$header_esc} {$pfb_alexa} {$dup_mode} {$elog}");
+									if ($pfb['dnsbl_py_blacklist']) {
+										exec("{$pfb['script']} dnsbl_scrub_python {$header_esc} {$pfb_alexa} unused {$elog}");
+									} else {
+										exec("{$pfb['script']} dnsbl_scrub_unbound {$header_esc} {$pfb_alexa} unused {$elog}");
+									}
 
 									if ($ip_cnt > 0) {
 										pfb_logger("  IPv4 count={$ip_cnt}\n", 1);
@@ -8792,6 +9056,23 @@ function sync_package_pfblockerng($cron='') {
 									}
 									unlink_if_exists("{$pfb['dnsbldir']}/check.conf");
 								}
+								elseif ($pfb['dnsbl_py_blacklist'] && !empty($exclusion_data)) {
+									pfb_logger(".\n", 1);
+
+									// Bypass TOP1M whitelist, if user configured
+									$pfb_alexa = 'Disabled';
+									if ($pfb['dnsbl_alexa'] == 'on' &&
+									    $list['filter_alexa'] == 'on' &&
+									    file_exists("{$pfb['dbdir']}/pfbalexawhitelist.txt")) {
+										$pfb_alexa = 'on';
+									}
+
+									// Call script to process DNSBL 'De-Duplication / TOP1M Whitelisting'
+									exec("{$pfb['script']} dnsbl_scrub_python {$header_esc} {$pfb_alexa} unused {$elog}");
+
+									unlink_if_exists("{$pfbfolder}/{$header}.bk");
+									$result = array('unbound-checkconf: no errors');
+								}
 								else {
 									$log = "\n No Domains Found! Ensure only domain based Feeds are used for DNSBL!\n";
 									pfb_logger("{$log}", 1);
@@ -8801,12 +9082,14 @@ function sync_package_pfblockerng($cron='') {
 									@copy("{$file_dwn}.orig", "/tmp/Error_{$header}_{$ts}.orig");
 
 									unlink_if_exists("{$pfbfolder}/{$header}.bk");
+									unlink_if_exists("{$pfbfolder}/{$header}.ex");
 									$result = array('unbound-checkconf: no errors');
 								}
 
 								// If parse error found, use previously downloaded file if available
 								if (!$pfb['dnsbl_py_blacklist'] && !preg_grep("/unbound-checkconf: no errors/", $result)) {
 									unlink_if_exists("{$pfbfolder}/{$header}.bk");
+									unlink_if_exists("{$pfbfolder}/{$header}.ex");
 
 									pfb_logger("\n  DNSBL FAIL - Skipped! Use previous data, if found:\n", 2);
 									$log = htmlspecialchars(implode("\n", $result));
@@ -8826,39 +9109,98 @@ function sync_package_pfblockerng($cron='') {
 									@rename("{$pfbfolder}/{$header}.bk", "{$pfbfolder}/{$header}.txt");
 								}
 
+								// Rename processed whitelist file to final location
+								if (file_exists("{$pfbfolder}/{$header}.ex")) {
+									@rename("{$pfbfolder}/{$header}.ex", "{$pfbfolder}/{$header}.exclusions");
+								}
+
 								// Create empty placeholder file
 								if (!file_exists("{$pfbfolder}/{$header}.txt")) {
 									touch("{$pfbfolder}/{$header}.txt");
 								}
 
-								$list_cnt	= exec("{$pfb['grep']} -c ^ " . escapeshellarg("{$pfbfolder}/{$header}.txt"));
-								$alias_cnt	= $alias_cnt + $list_cnt;
+								// Create empty placeholder whitelist file
+								if (!file_exists("{$pfbfolder}/{$header}.exclusions")) {
+									touch("{$pfbfolder}/{$header}.exclusions");
+								}
+
+								// Save DNSBL feed info for postprocessing and alias information
+								$alias_postprocessing_data[] = array(
+									'header'              => $header,
+									'alias'               => $alias,
+									'lists_dnsbl_current' => $lists_dnsbl_current,
+									'pfbfolder'           => $pfbfolder
+								);
 
 								// Remove update file indicator
 								unlink_if_exists("{$pfbfolder}/{$header}.update");
 							}
 						}
 					}
-
-					// If changes found update DNSBL alias and TLD disabled, call function to update DNSBL alias
-					if ($pfb['aliasupdate'] && !$pfb['dnsbl_tld']) {
-						dnsbl_alias_update('update', $alias, $pfbfolder, $lists_dnsbl_current, $alias_cnt);
-					}
-
-					// Collect Alias/Feeds for post TLD function
-					if ($pfb['dnsbl_tld']) {
-						if (!is_array($pfb['tld_update'][$alias])) {
-							$pfb['tld_update'][$alias] = array();
-						}
-						$pfb['tld_update'][$alias]['feeds']	= $lists_dnsbl_current;
-						$pfb['tld_update'][$alias]['count']	= $alias_cnt;
-					}
 				}
 				else {
 					dnsbl_alias_update('disabled', $alias, '', '', '');
 				}
 			}
+		}
 
+		if ($pfb['dnsbl_py_blacklist'] && $postprocess) {
+			$log = "\n===[  DNSBL Postprocess  ]============================================\n";
+			pfb_logger("{$log}", 1);
+
+			// Consolidate all exclusions 
+			exec("{$pfb['script']} dnsbl_py_assemble_exclusions_file unused unused unused {$elog}");
+
+			exec("{$pfb['script']} dnsbl_py_assemble_redundants_file unused unused unused {$elog}");
+
+			// Process Whitelists
+			foreach ($postprocess_dnsbl as $header_esc) {
+
+				$log = "\n[ ${header_esc} ]${logtab} Processing downloaded whitelist entries\n";
+				pfb_logger("{$log}", 1);
+
+				// Ignore TOP1M whitelist at this stage
+				$pfb_alexa = 'Disabled';
+
+				// Call script to process DNSBL Whitelisting
+				exec("{$pfb['script']} dnsbl_py_remove_excluded {$header_esc} {$pfb_alexa} unused {$elog}");
+
+				$log = "\n[ ${header_esc} ]${logtab} Removing redundant DNSBL entries\n";
+				pfb_logger("{$log}", 1);
+
+				exec("{$pfb['script']} dnsbl_py_remove_redundant {$header_esc} unused unused {$elog}");
+			}
+
+			exec("{$pfb['script']} dnsbl_py_cleanup_exclusions_file unused unused unused {$elog}");
+
+			exec("{$pfb['script']} dnsbl_py_cleanup_redundants_file unused unused unused {$elog}");
+		}
+
+		$alias_cnt = 0;
+		// Process alias information
+		foreach ($alias_postprocessing_data as $item) {
+
+			$header              = $item['header'];
+			$alias               = $item['alias'];
+			$lists_dnsbl_current = $item['lists_dnsbl_current'];
+			$pfbfolder           = $item['pfbfolder'];
+			
+			$list_cnt	= exec("{$pfb['grep']} -c ^ " . escapeshellarg("{$pfbfolder}/{$header}.txt"));
+			$alias_cnt	= $alias_cnt + $list_cnt;
+
+			// If changes found update DNSBL alias and TLD disabled, call function to update DNSBL alias
+			if ($pfb['aliasupdate'] && !$pfb['dnsbl_tld']) {
+				dnsbl_alias_update('update', $alias, $pfbfolder, $lists_dnsbl_current, $alias_cnt);
+			}
+		
+			// Collect Alias/Feeds for post TLD function
+			if ($pfb['dnsbl_tld']) {
+				if (!is_array($pfb['tld_update'][$alias])) {
+					$pfb['tld_update'][$alias] = array();
+				}
+				$pfb['tld_update'][$alias]['feeds']	= $lists_dnsbl_current;
+				$pfb['tld_update'][$alias]['count']	= $alias_cnt;
+			}
 		}
 
 		// Remove any unused DNSBL aliases
@@ -8951,7 +9293,7 @@ function sync_package_pfblockerng($cron='') {
 		if (!empty($lists_dnsbl_all)) {
 			pfb_logger("\n------------------------------------------------------------------------\n", 1);
 
-			pfb_logger('Assembling DNSBL database...', 1);
+			pfb_logger("\nAssembling DNSBL database...", 1);
 			unlink_if_exists("{$pfb['dnsbl_file']}.raw");
 			$pfb_output = @fopen("{$pfb['dnsbl_file']}.raw", 'w');
 			foreach ($lists_dnsbl_all as $current_list) {
